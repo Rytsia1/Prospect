@@ -141,9 +141,76 @@ paths:
         "204":
           description: Deleted
 
+  /documents/{documentId}/pages:
+    get:
+      summary: Page summaries in page order (available once the document is processed)
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Pages
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [page_number, extraction_status, char_count]
+                      properties:
+                        page_number:
+                          type: integer
+                          description: 1-based physical page, as a PDF viewer numbers it
+                        label:
+                          type: string
+                          nullable: true
+                          description: Printed page label defined by the PDF, if any
+                        extraction_status:
+                          type: string
+                          enum: [success, partial, failed]
+                        char_count:
+                          type: integer
+
+  /documents/{documentId}/sections:
+    get:
+      summary: Detected sections in document order
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Sections
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, ordinal, start_page, end_page]
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        ordinal:
+                          type: integer
+                        title:
+                          type: string
+                          nullable: true
+                          description: Verbatim heading text; null when no heading was detected
+                        start_page:
+                          type: integer
+                        end_page:
+                          type: integer
+
   /documents/{documentId}/pages/{pageNumber}:
     get:
-      summary: Get page content and evidence
+      summary: Get one page's extracted text
       parameters:
         - $ref: "#/components/parameters/DocumentId"
         - name: pageNumber
@@ -155,6 +222,30 @@ paths:
       responses:
         "200":
           description: Page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [page_number, extraction_status, text]
+                properties:
+                  page_number:
+                    type: integer
+                  label:
+                    type: string
+                    nullable: true
+                  extraction_status:
+                    type: string
+                    enum: [success, partial, failed]
+                  text:
+                    type: string
+                  width:
+                    type: number
+                    nullable: true
+                  height:
+                    type: number
+                    nullable: true
+        "404":
+          description: Document or page not found
 
   /documents/{documentId}/metrics:
     get:

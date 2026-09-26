@@ -3,18 +3,15 @@
 import os
 import uuid
 
-import boto3
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from moto.server import ThreadedMotoServer
 from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.db import SessionLocal
 from app.main import app
-from app.models import Document, ProcessingJob
-from app.storage import S3ObjectStorage, get_storage
+from app.models import Document, ProcessingJob, User
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TEST_DATABASE_URL"), reason="TEST_DATABASE_URL not set"
@@ -24,21 +21,9 @@ client = TestClient(app)
 PDF = b"%PDF-1.7\n" + b"0" * 100
 
 
-@pytest.fixture(scope="module", autouse=True)
-def storage():
-    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0)
-    server.start()
-    host, port = server.get_host_and_port()
-    endpoint = f"http://{host}:{port}"
-    creds = {"aws_access_key_id": "test", "aws_secret_access_key": "test"}
-    boto3.client("s3", endpoint_url=endpoint, region_name="us-east-1", **creds).create_bucket(
-        Bucket="prospect-test"
-    )
-    storage = S3ObjectStorage(endpoint, "prospect-test", "test", "test")
-    app.dependency_overrides[get_storage] = lambda: storage
-    yield storage
-    app.dependency_overrides.clear()
-    server.stop()
+@pytest.fixture(autouse=True)
+def _use_storage(storage):
+    """Every test here talks to the moto S3 server from conftest."""
 
 
 def new_user() -> dict[str, str]:
@@ -161,6 +146,16 @@ def test_requires_valid_session():
     assert client.get("/api/v1/documents").status_code == 401
     forged = f"{uuid.uuid4()}.{'0' * 64}"
     response = client.get("/api/v1/documents", headers={"Authorization": f"Bearer {forged}"})
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+def test_token_for_a_removed_user_is_rejected_not_a_server_error():
+    headers = new_user()
+    user_id = uuid.UUID(headers["Authorization"].removeprefix("Bearer ").split(".")[0])
+    with SessionLocal() as s, s.begin():
+        s.delete(s.get_one(User, user_id))
+    response = create(headers)
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "unauthorized"
 

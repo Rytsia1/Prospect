@@ -9,16 +9,24 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth import CurrentUserId
 from app.config import get_settings
 from app.db import get_session
 from app.errors import ApiError
-from app.models import Document, DocumentStatus, DocumentType, ProcessingJob
+from app.models import (
+    Document,
+    DocumentPage,
+    DocumentSection,
+    DocumentStatus,
+    DocumentType,
+    PageExtractionStatus,
+    ProcessingJob,
+)
 from app.storage import ObjectStorage, get_storage
 
 PDF_MIME = "application/pdf"
@@ -73,6 +81,40 @@ class DocumentList(BaseModel):
 class SignedDownload(BaseModel):
     url: str
     expires_at: datetime
+
+
+class PageSummary(BaseModel):
+    page_number: int  # 1-based physical page, as a PDF viewer numbers it
+    label: str | None  # printed page label, when the PDF defines one
+    extraction_status: PageExtractionStatus
+    char_count: int
+
+
+class PageList(BaseModel):
+    items: list[PageSummary]
+
+
+class PageOut(BaseModel):
+    page_number: int
+    label: str | None
+    extraction_status: PageExtractionStatus
+    text: str
+    width: float | None
+    height: float | None
+
+
+class SectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    ordinal: int
+    title: str | None  # None: no heading detected; never an invented name
+    start_page: int
+    end_page: int
+
+
+class SectionList(BaseModel):
+    items: list[SectionOut]
 
 
 def _expires_at() -> datetime:
@@ -183,3 +225,63 @@ def get_download_url(
         url=storage.signed_url(document.storage_key, "get", SIGNED_URL_TTL_SECONDS),
         expires_at=_expires_at(),
     )
+
+
+@router.get("/{document_id}/pages")
+def list_pages(document_id: uuid.UUID, user_id: CurrentUserId, session: DbSession) -> PageList:
+    _owned_document(session, user_id, document_id)
+    rows = session.execute(
+        select(
+            DocumentPage.page_number,
+            DocumentPage.page_metadata["label"].astext,
+            DocumentPage.extraction_status,
+            func.length(DocumentPage.text),
+        )
+        .where(DocumentPage.document_id == document_id)
+        .order_by(DocumentPage.page_number)
+    )
+    return PageList(
+        items=[
+            PageSummary(page_number=n, label=label, extraction_status=status, char_count=chars)
+            for n, label, status, chars in rows
+        ]
+    )
+
+
+@router.get("/{document_id}/pages/{page_number}")
+def get_page(
+    document_id: uuid.UUID,
+    page_number: Annotated[int, Path(ge=1)],
+    user_id: CurrentUserId,
+    session: DbSession,
+) -> PageOut:
+    _owned_document(session, user_id, document_id)
+    page = session.scalar(
+        select(DocumentPage).where(
+            DocumentPage.document_id == document_id, DocumentPage.page_number == page_number
+        )
+    )
+    if page is None:
+        raise ApiError(404, "not_found", "Page not found")
+    meta = page.page_metadata
+    return PageOut(
+        page_number=page.page_number,
+        label=meta.get("label"),
+        extraction_status=page.extraction_status,
+        text=page.text,
+        width=meta.get("width"),
+        height=meta.get("height"),
+    )
+
+
+@router.get("/{document_id}/sections")
+def list_sections(
+    document_id: uuid.UUID, user_id: CurrentUserId, session: DbSession
+) -> SectionList:
+    _owned_document(session, user_id, document_id)
+    sections = session.scalars(
+        select(DocumentSection)
+        .where(DocumentSection.document_id == document_id)
+        .order_by(DocumentSection.ordinal)
+    )
+    return SectionList(items=[SectionOut.model_validate(s) for s in sections])

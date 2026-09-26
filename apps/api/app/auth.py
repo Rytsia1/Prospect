@@ -28,7 +28,10 @@ def sign(user_id: uuid.UUID) -> str:
     return f"{user_id}.{signature}"
 
 
-def current_user_id(authorization: Annotated[str | None, Header()] = None) -> uuid.UUID:
+def current_user_id(
+    session: Annotated[Session, Depends(get_session)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> uuid.UUID:
     token = (authorization or "").removeprefix("Bearer ").strip()
     try:
         user_id = uuid.UUID(token.partition(".")[0])
@@ -36,6 +39,8 @@ def current_user_id(authorization: Annotated[str | None, Header()] = None) -> uu
         raise ApiError(401, "unauthorized", "Missing or invalid session token") from None
     if not hmac.compare_digest(token, sign(user_id)):
         raise ApiError(401, "unauthorized", "Missing or invalid session token")
+    if session.get(User, user_id) is None:  # user removed: make the client start a new session
+        raise ApiError(401, "unauthorized", "Session is no longer valid")
     return user_id
 
 

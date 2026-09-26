@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { PageViewer } from "@/components/page-viewer";
 import { StatusBadge } from "@/components/status-badge";
 import { ApiError, api } from "@/lib/api";
 import {
@@ -14,7 +15,7 @@ import {
 
 const POLL_MS = 5000;
 
-export function DocumentDetail({ id }: { id: string }) {
+export function DocumentDetail({ id, initialPage }: { id: string; initialPage: number }) {
   const [document, setDocument] = useState<ProspectDocument | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [opening, setOpening] = useState(false);
@@ -141,9 +142,15 @@ export function DocumentDetail({ id }: { id: string }) {
         ))}
       </dl>
 
-      <p className="text-sm text-slate-500">
-        Pages, sections, and extracted figures appear here once processing is available.
-      </p>
+      {document.status === "READY" ? (
+        <PageViewer documentId={document.id} initialPage={initialPage} />
+      ) : (
+        document.status !== "FAILED" && (
+          <p className="text-sm text-slate-500">
+            Extracted pages appear here once processing finishes.
+          </p>
+        )
+      )}
     </div>
   );
 }

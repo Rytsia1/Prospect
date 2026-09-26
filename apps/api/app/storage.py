@@ -1,6 +1,7 @@
 """Private object storage. The rest of the app depends on `ObjectStorage`, never on boto3."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal, Protocol
 
 import boto3
@@ -15,6 +16,7 @@ SignedUrlMethod = Literal["get", "put"]
 class ObjectStorage(Protocol):
     def upload(self, key: str, data: bytes, content_type: str) -> None: ...
     def download(self, key: str) -> bytes: ...
+    def download_file(self, key: str, path: Path) -> None: ...
     def delete(self, key: str) -> None: ...
     def size(self, key: str) -> int | None: ...
     def read_prefix(self, key: str, length: int) -> bytes: ...
@@ -40,6 +42,10 @@ class S3ObjectStorage:
 
     def download(self, key: str) -> bytes:
         return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+
+    def download_file(self, key: str, path: Path) -> None:
+        """Stream an object to disk without holding it in memory."""
+        self.client.download_file(self.bucket, key, str(path))
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)

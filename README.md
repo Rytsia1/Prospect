@@ -79,6 +79,28 @@ uv run uvicorn app.main:app --reload    # http://localhost:8000/health
 Production start command (Railway/Render):
 `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log`
 
+## Run the Document Worker
+
+The worker turns uploaded PDFs into pages, sections, and chunks. It polls the
+`processing_jobs` table, so it needs the same environment variables as the API.
+
+```bash
+cd apps/api
+uv run python -m app.worker
+```
+
+Deploy it as a second Railway/Render service from `apps/api` with start command
+`python -m app.worker` (no migrations; the API service runs them). When the platform sets
+`PORT`, the worker answers `GET /health` on it.
+
+Behavior: failed jobs caused by the document itself (damaged, password-protected, no text
+layer) fail immediately with a user-visible reason. Other errors retry up to 3 times with
+backoff. A job whose worker died is reclaimed after a 15-minute lease, so documents never stay
+in PROCESSING. Reprocessing replaces a document's pages/sections/chunks in one transaction.
+
+PDF parsing uses PyMuPDF, which is licensed AGPL-3.0 (commercial licenses are available from
+Artifex). Running it in a public web service carries AGPL obligations; review before launch.
+
 ## Object Storage (Cloudflare R2)
 
 The bucket must stay private: no public access, no r2.dev URL. The API holds the credentials

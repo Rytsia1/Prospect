@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -17,6 +18,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -103,6 +105,8 @@ class DocumentPage(Base):
     __tablename__ = "document_pages"
     __table_args__ = (
         UniqueConstraint("document_id", "page_number"),
+        # Target of the chunk composite FK: a chunk's document/page number must match its page.
+        UniqueConstraint("id", "document_id", "page_number", name="uq_document_pages_identity"),
         CheckConstraint("page_number >= 1", name="ck_document_pages_page_number"),
     )
 
@@ -113,12 +117,19 @@ class DocumentPage(Base):
     extraction_status: Mapped[PageExtractionStatus] = mapped_column(
         _enum(PageExtractionStatus, "page_extraction_status")
     )
+    # label (printed page label), width/height (points), rotation, has_images, table_count.
+    page_metadata: Mapped[dict] = mapped_column("metadata", JSONB, server_default="{}")
+    # Ordered text/table blocks with bboxes (app/processing.py Block.to_json) for evidence.
+    blocks: Mapped[list] = mapped_column(JSONB, server_default="[]")
 
 
 class DocumentSection(Base):
     __tablename__ = "document_sections"
     __table_args__ = (
         Index("ix_document_sections_document_id_start_page", "document_id", "start_page"),
+        UniqueConstraint("document_id", "ordinal", name="uq_document_sections_ordinal"),
+        UniqueConstraint("id", "document_id", name="uq_document_sections_identity"),
+        CheckConstraint("ordinal >= 0", name="ck_document_sections_ordinal"),
         CheckConstraint(
             "start_page >= 1 AND end_page >= start_page", name="ck_document_sections_page_range"
         ),
@@ -126,7 +137,9 @@ class DocumentSection(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
-    title: Mapped[str] = mapped_column(String(500))
+    ordinal: Mapped[int] = mapped_column(Integer)  # document order
+    # Verbatim heading text. NULL = generic section: no heading was detected with confidence.
+    title: Mapped[str | None] = mapped_column(String(500))
     start_page: Mapped[int] = mapped_column(Integer)
     end_page: Mapped[int] = mapped_column(Integer)
 
@@ -136,11 +149,36 @@ class DocumentChunk(Base):
     __table_args__ = (
         UniqueConstraint("page_id", "chunk_index"),
         CheckConstraint("chunk_index >= 0", name="ck_document_chunks_chunk_index"),
+        CheckConstraint(
+            "block_start >= 0 AND block_end >= block_start", name="ck_document_chunks_blocks"
+        ),
+        # Document → page → section → chunk, enforced by the database, not just by the worker.
+        ForeignKeyConstraint(
+            ["page_id", "document_id", "page_number"],
+            ["document_pages.id", "document_pages.document_id", "document_pages.page_number"],
+            name="fk_document_chunks_page",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["section_id", "document_id"],
+            ["document_sections.id", "document_sections.document_id"],
+            name="fk_document_chunks_section",
+            ondelete="CASCADE",
+        ),
+        Index("ix_document_chunks_document_order", "document_id", "page_number", "chunk_index"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    page_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_pages.id", ondelete="CASCADE"))
-    chunk_index: Mapped[int] = mapped_column(Integer)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE", name="fk_document_chunks_document")
+    )
+    page_id: Mapped[uuid.UUID] = mapped_column()
+    page_number: Mapped[int] = mapped_column(Integer)
+    section_id: Mapped[uuid.UUID] = mapped_column()
+    chunk_index: Mapped[int] = mapped_column(Integer)  # order within the page
+    # Inclusive range into document_pages.blocks: the chunk's source regions on the page.
+    block_start: Mapped[int] = mapped_column(Integer)
+    block_end: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
     # ponytail: embedding VECTOR(n) + index added in Phase 5 once the embedding model fixes n.
 

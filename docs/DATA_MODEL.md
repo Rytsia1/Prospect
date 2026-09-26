@@ -79,7 +79,9 @@ Database-backed job queue polled by the worker (DEPLOYMENT.md §5, option A).
 | document_id | UUID | FK |
 | page_number | INTEGER | 1-based |
 | text | TEXT | extracted text |
-| extraction_status | ENUM | success/partial/failed |
+| extraction_status | ENUM | success/partial/failed (partial = images but no text layer) |
+| metadata | JSONB | label (printed page label), width/height (points), rotation, has_images, table_count |
+| blocks | JSONB | ordered text/table blocks: index, kind, bbox [x0,y0,x1,y1] (points, top-left origin), text, font_size, bold, heading |
 
 Unique:
 
@@ -89,23 +91,30 @@ Unique:
 
 ### document_sections
 
-| Column | Type |
-|---|---|
-| id | UUID |
-| document_id | UUID |
-| title | VARCHAR |
-| start_page | INTEGER |
-| end_page | INTEGER |
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| document_id | UUID | FK |
+| ordinal | INTEGER | document order; unique per document |
+| title | VARCHAR | nullable; verbatim heading text, NULL = generic section (no heading detected) |
+| start_page | INTEGER | |
+| end_page | INTEGER | |
 
 ### document_chunks
 
-| Column | Type |
-|---|---|
-| id | UUID |
-| page_id | UUID |
-| chunk_index | INTEGER |
-| content | TEXT |
-| embedding | VECTOR |
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| document_id | UUID | FK documents |
+| page_id | UUID | composite FK (page_id, document_id, page_number) → document_pages |
+| page_number | INTEGER | denormalized for retrieval; kept consistent by the composite FK |
+| section_id | UUID | composite FK (section_id, document_id) → document_sections |
+| chunk_index | INTEGER | order within the page |
+| block_start / block_end | INTEGER | inclusive range into document_pages.blocks (source regions) |
+| content | TEXT | verbatim text of those blocks |
+| embedding | VECTOR | added with retrieval (Phase 5) |
+
+Traceability: chunk → section → page → document, enforced by the database.
 
 Unique:
 

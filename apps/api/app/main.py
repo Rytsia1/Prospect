@@ -1,4 +1,3 @@
-import json
 import logging
 import time
 import uuid
@@ -14,43 +13,18 @@ from starlette.exceptions import HTTPException
 
 from app import auth, documents
 from app.config import get_settings
+from app.logs import configure_logging
 
 API_V1_PREFIX = "/api/v1"  # docs/API_SPEC.yaml `servers`; resource routers mount here.
 
 
-class JsonFormatter(logging.Formatter):
-    """One JSON object per line; pass structured fields via `extra={"fields": {...}}`."""
-
-    def format(self, record: logging.LogRecord) -> str:
-        entry = {
-            "ts": self.formatTime(record),
-            "level": record.levelname,
-            "logger": record.name,
-            "msg": record.getMessage(),
-            **getattr(record, "fields", {}),
-        }
-        if record.exc_info:
-            entry["exc"] = self.formatException(record.exc_info)
-        return json.dumps(entry, default=str)
-
-
 settings = get_settings()
-_handler = logging.StreamHandler()
-_handler.setFormatter(JsonFormatter())
-logging.basicConfig(level=settings.log_level, handlers=[_handler], force=True)
+configure_logging(settings.log_level)
 log = logging.getLogger("prospect.api")
 
 app = FastAPI(title="Prospect API", version="0.1.0")
 app.include_router(auth.router, prefix=API_V1_PREFIX)
 app.include_router(documents.router, prefix=API_V1_PREFIX)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["X-Request-ID"],
-)
 
 
 class ErrorBody(BaseModel):
@@ -90,12 +64,6 @@ async def validation_error(request: Request, exc: RequestValidationError) -> JSO
     return _error(request, 422, "validation_error", "Request validation failed", details)
 
 
-@app.exception_handler(Exception)
-async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
-    # Details stay in the logs; clients get a generic message plus the request id.
-    return _error(request, 500, "internal_error", "Internal server error")
-
-
 @app.middleware("http")
 async def request_context(request: Request, call_next):
     request.state.request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
@@ -108,8 +76,9 @@ async def request_context(request: Request, call_next):
     try:
         response = await call_next(request)
     except Exception:
+        # Answer here, inside CORS, so browsers can read the error. Details stay in the logs.
         log.exception("request failed", extra={"fields": fields})
-        raise
+        response = _error(request, 500, "internal_error", "Internal server error")
     response.headers["X-Request-ID"] = request.state.request_id
     fields |= {
         "status": response.status_code,
@@ -117,6 +86,17 @@ async def request_context(request: Request, call_next):
     }
     log.info("request", extra={"fields": fields})
     return response
+
+
+# Added last so it is the outermost middleware: every response, errors included, gets CORS.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origin_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
+)
 
 
 class Health(BaseModel):

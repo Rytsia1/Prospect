@@ -41,7 +41,7 @@ function sessionToken(): Promise<string> {
   return pendingToken;
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function api<T>(path: string, init: RequestInit = {}, retried = false): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API_URL}/api/v1${path}`, {
@@ -55,7 +55,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   } catch {
     throw new ApiError(0, "network_error", "Could not reach the Prospect API.");
   }
-  if (res.status === 401) localStorage.removeItem(TOKEN_KEY); // e.g. APP_SECRET rotated
+  if (res.status === 401) {
+    // Stale session (APP_SECRET rotated, user removed): start a new one and retry once.
+    localStorage.removeItem(TOKEN_KEY);
+    if (!retried) return api<T>(path, init, true);
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new ApiError(

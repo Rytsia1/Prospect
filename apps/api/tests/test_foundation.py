@@ -48,6 +48,12 @@ def test_unhandled_error_hides_internals():
     assert "secret" not in response.text
 
 
+def test_errors_carry_cors_headers_so_browsers_can_read_them():
+    response = client.get("/_test/boom", headers={"Origin": "http://localhost:3000"})
+    assert response.status_code == 500
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
 def test_managed_database_urls_get_psycopg_driver():
     for url in ("postgres://u:p@h/db", "postgresql://u:p@h/db"):
         assert Settings(database_url=url).database_url == "postgresql+psycopg://u:p@h/db"

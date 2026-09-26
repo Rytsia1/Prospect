@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 # fastapi/uvicorn: HTTP API (ADR-001). pydantic-settings: env-var config (deployment rule 9).
 # sqlalchemy/alembic: ORM + migrations (AGENTS rule 8). psycopg: PostgreSQL driver.
 # boto3: S3-compatible client for private object storage (Cloudflare R2, ADR-005).
+# pymupdf: PDF text, layout and table extraction (PRD §12; AGPL-3.0, see README).
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -13,6 +14,7 @@ dependencies = [
     "alembic>=1.13",
     "psycopg[binary]>=3.2",
     "boto3>=1.35",
+    "pymupdf>=1.24",
 ]
 
 [dependency-groups]

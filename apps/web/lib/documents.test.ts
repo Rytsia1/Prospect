@@ -35,3 +35,10 @@ test("formats sizes", () => {
   assert.equal(formatBytes(1536), "1.5 KB");
   assert.equal(formatBytes(12.5 * 1024 * 1024), "12.5 MB");
 });
+
+test("printed labels show only when they differ from the physical page", async () => {
+  const { printedLabel } = await import("./documents.ts");
+  assert.equal(printedLabel({ page_number: 2, label: "86" }), "86");
+  assert.equal(printedLabel({ page_number: 2, label: "2" }), null);
+  assert.equal(printedLabel({ page_number: 2, label: null }), null);
+});

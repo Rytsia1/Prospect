@@ -73,3 +73,34 @@ export function formatDate(iso: string): string {
     day: "numeric",
   });
 }
+
+export type PageExtractionStatus = "success" | "partial" | "failed";
+
+export type PageSummary = {
+  page_number: number;
+  label: string | null;
+  extraction_status: PageExtractionStatus;
+  char_count: number;
+};
+
+export type DocumentPage = {
+  page_number: number;
+  label: string | null;
+  extraction_status: PageExtractionStatus;
+  text: string;
+  width: number | null;
+  height: number | null;
+};
+
+export type DocumentSection = {
+  id: string;
+  ordinal: number;
+  title: string | null;
+  start_page: number;
+  end_page: number;
+};
+
+/** Printed page label worth showing: only when the PDF defines one that differs from the index. */
+export function printedLabel(page: { page_number: number; label: string | null }): string | null {
+  return page.label && page.label !== String(page.page_number) ? page.label : null;
+}
