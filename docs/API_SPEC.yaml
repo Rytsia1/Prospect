@@ -1,0 +1,178 @@
+openapi: 3.0.3
+info:
+  title: Prospect API
+  version: 0.1.0
+  description: Evidence-first financial document intelligence API.
+
+servers:
+  - url: /api/v1
+
+paths:
+  /documents:
+    post:
+      summary: Upload a financial document
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                document_type:
+                  type: string
+                  enum: [annual_report, financial_statement, prospectus]
+                fiscal_year:
+                  type: integer
+      responses:
+        "201":
+          description: Document accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+
+    get:
+      summary: List user's documents
+      responses:
+        "200":
+          description: Document list
+
+  /documents/{documentId}:
+    get:
+      summary: Get document metadata and processing state
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Document
+
+    delete:
+      summary: Delete a document
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "204":
+          description: Deleted
+
+  /documents/{documentId}/pages/{pageNumber}:
+    get:
+      summary: Get page content and evidence
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - name: pageNumber
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Page
+
+  /documents/{documentId}/metrics:
+    get:
+      summary: Get extracted financial facts
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Financial facts
+
+  /documents/{documentId}/calculations:
+    get:
+      summary: Get derived calculations
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Calculations
+
+  /research/query:
+    post:
+      summary: Ask a source-grounded research question
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResearchQuery"
+      responses:
+        "200":
+          description: Research answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchAnswer"
+
+components:
+  parameters:
+    DocumentId:
+      name: documentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    Document:
+      type: object
+      required: [id, filename, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        status:
+          type: string
+          enum: [UPLOADED, QUEUED, PROCESSING, EXTRACTING, INDEXING, READY, FAILED]
+
+    ResearchQuery:
+      type: object
+      required: [question]
+      properties:
+        document_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        session_id:
+          type: string
+          format: uuid
+        question:
+          type: string
+
+    ResearchAnswer:
+      type: object
+      required: [answer, citations]
+      properties:
+        answer:
+          type: string
+        citations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Citation"
+        limitations:
+          type: array
+          items:
+            type: string
+
+    Citation:
+      type: object
+      required: [evidence_id, document_id, page]
+      properties:
+        evidence_id:
+          type: string
+          format: uuid
+        document_id:
+          type: string
+          format: uuid
+        page:
+          type: integer
+        excerpt:
+          type: string
