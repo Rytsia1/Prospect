@@ -1,1 +1,12 @@
 @import "tailwindcss";
+
+/* Evidence categories (docs/UX_SPEC.md §2). Always paired with a text label, never color alone. */
+@theme {
+  --color-fact: #1e40af;
+  --color-calc: #047857;
+  --color-interp: #92400e;
+}
+
+body {
+  font-variant-numeric: tabular-nums;
+}

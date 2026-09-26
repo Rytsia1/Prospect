@@ -1,15 +1,23 @@
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """All config comes from environment variables (or a local, git-ignored .env)."""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/prospect"
+    database_url: str
+    object_storage_endpoint: str
+    object_storage_bucket: str
+    object_storage_access_key: SecretStr
+    object_storage_secret_key: SecretStr
+    app_secret: SecretStr
     # Comma-separated. Production must list only the deployed frontend origin.
     cors_origins: str = "http://localhost:3000"
+    log_level: str = "INFO"
 
     @field_validator("database_url")
     @classmethod
@@ -27,4 +35,4 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return Settings()  # type: ignore[call-arg]  # values come from the environment
