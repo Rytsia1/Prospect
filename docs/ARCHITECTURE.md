@@ -1,197 +1,338 @@
 # Prospect System Architecture
 
-## 1. Architectural Goal
+## 1. Architecture Goal
 
-Build an evidence-first financial document system where AI is a replaceable interpretation layer rather than the source of financial truth.
+Prospect is a real public web application.
 
-## 2. Logical Architecture
+The architecture prioritizes:
+
+- simple managed deployment;
+- low operational overhead;
+- clear service boundaries;
+- asynchronous document processing;
+- evidence-first financial data;
+- replaceable AI providers.
+
+Docker is optional for local development and is NOT a production deployment dependency.
+
+## 2. Production Architecture
 
 ```text
-                    ┌──────────────────────┐
-                    │       Next.js        │
-                    │ Research Workspace   │
-                    └──────────┬───────────┘
+                         PUBLIC INTERNET
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │       Vercel        │
+                    │ Next.js Web App     │
+                    └──────────┬──────────┘
                                │ HTTPS
-                    ┌──────────▼───────────┐
-                    │       FastAPI        │
-                    │ API / Domain Layer   │
-                    └───────┬─────┬────────┘
-                            │     │
-                ┌───────────┘     └────────────┐
-                ▼                              ▼
-        ┌──────────────┐                ┌──────────────┐
-        │ PostgreSQL   │                │ Object Store │
-        │ + pgvector   │                │ Private PDFs │
-        └──────────────┘                └──────────────┘
-                ▲
-                │
-        ┌───────┴────────┐
-        │ Processing Job │
-        └───────┬────────┘
-                ▼
-        ┌───────────────┐
-        │ Worker        │
-        │ PDF / OCR /   │
-        │ Table / NLP   │
-        └───────┬───────┘
-                │
-                ▼
-        Evidence + Facts
-                │
-                ▼
-        ┌───────────────┐
-        │ Research      │
-        │ Retrieval     │
-        └───────┬───────┘
-                ▼
-              LLM
+                               ▼
+                    ┌─────────────────────┐
+                    │ Managed API Service │
+                    │ FastAPI             │
+                    │ Railway / Render    │
+                    └──────┬───────┬──────┘
+                           │       │
+                           │       ▼
+                           │  ┌──────────────┐
+                           │  │ AI Provider  │
+                           │  │ LLM/Embed    │
+                           │  └──────────────┘
+                           │
+                ┌──────────┴──────────┐
+                ▼                     ▼
+       ┌────────────────┐    ┌──────────────────┐
+       │ Managed        │    │ Private Object   │
+       │ PostgreSQL     │    │ Storage          │
+       │ + pgvector     │    │ R2 / Supabase    │
+       └────────────────┘    └──────────────────┘
+                ▲                     ▲
+                │                     │
+                └──────────┬──────────┘
+                           │
+                  ┌────────▼────────┐
+                  │ Managed Worker  │
+                  │ Railway/Render  │
+                  └─────────────────┘
 ```
 
-## 3. Major Components
+## 3. Recommended Deployment
 
-### Web
+### Frontend
+
+**Vercel**
 
 Responsibilities:
 
-- upload UI
-- processing status
+- Next.js application
+- public website
+- authenticated UI
 - document workspace
-- PDF viewer
-- financial overview
-- research chat
+- research interface
 
-The web app must not contain financial calculation logic.
+### Backend API
 
-### API
+**Railway or Render**
 
 Responsibilities:
 
-- authentication/authorization
+- FastAPI
+- authentication
+- authorization
 - document metadata
-- API contracts
-- domain orchestration
-- calculations
+- signed upload URLs
 - research orchestration
+- calculations
+- API endpoints
 
 ### Worker
 
+**Railway or Render**
+
 Responsibilities:
 
-- download source PDF
-- parse pages
-- extract text
-- extract tables
-- detect sections
-- normalize financial values
-- generate evidence records
-- create embeddings
+- PDF processing
+- text extraction
+- table extraction
+- OCR fallback
+- financial extraction
+- chunking
+- embeddings
+- indexing
+
+The worker should be independently deployable from the API.
 
 ### Database
 
-PostgreSQL stores:
+**Managed PostgreSQL**
 
-- users
-- documents
-- pages
-- chunks
-- sections
-- financial facts
-- evidence
-- calculations
-- research sessions
+Recommended options:
 
-pgvector stores semantic embeddings.
+- Railway PostgreSQL
+- Supabase PostgreSQL
+
+Requirements:
+
+- PostgreSQL
+- NUMERIC/DECIMAL
+- pgvector support
+- automated backups where available
 
 ### Object Storage
 
-Stores original PDFs and optionally page/render artifacts.
+Recommended:
 
-Files remain private.
+- Cloudflare R2
+- Supabase Storage
 
-## 4. Processing State Machine
+Requirements:
 
-```text
-UPLOADED
-  ↓
-QUEUED
-  ↓
-PROCESSING
-  ├──→ FAILED
-  │      ↓
-  │    RETRY
-  ↓
-EXTRACTING
-  ↓
-INDEXING
-  ↓
-READY
-```
+- private buckets
+- server-side credentials
+- signed URLs for controlled access
+- lifecycle/deletion support
 
-## 5. Data Flow
+## 4. Production Request Flow
+
+### Normal API request
 
 ```text
-Client
+Browser
  ↓
-API creates document
+Vercel
  ↓
-Object storage
- ↓
-Queue
- ↓
-Worker
- ↓
-Parser
- ↓
-Raw pages
- ↓
-Evidence extraction
- ↓
-Financial extraction
- ↓
-Validation
+FastAPI
  ↓
 PostgreSQL
  ↓
-Embedding index
+Response
+```
+
+### PDF upload
+
+Prefer direct-to-object-storage upload:
+
+```text
+Browser
  ↓
+FastAPI requests signed upload URL
+ ↓
+Browser uploads PDF directly to Object Storage
+ ↓
+Browser tells API upload is complete
+ ↓
+API creates processing job
+ ↓
+Worker processes document
+```
+
+This avoids routing large PDFs through the API server.
+
+## 5. Processing Flow
+
+```text
+Object Storage
+      ↓
+Job Queue / Worker Trigger
+      ↓
+Worker
+      ↓
+PDF Parser
+      ↓
+Text / Table Extraction
+      ↓
+Financial Extraction
+      ↓
+Evidence Creation
+      ↓
+Database
+      ↓
+Embeddings
+      ↓
 READY
 ```
 
-## 6. Architectural Rules
+For the first deployment, a simple database-backed job queue or managed worker mechanism is acceptable. A dedicated Redis queue can be introduced later if required.
 
-1. Financial values must be represented with decimal-safe types.
-2. LLM output must not directly overwrite source facts.
-3. Every financial fact requires provenance.
-4. Calculations consume structured facts, not generated prose.
-5. Retrieval results must retain evidence identity.
-6. The frontend never accesses the database directly.
-7. Storage URLs are private or signed and time-limited.
-8. Long-running work is asynchronous.
-9. Provider-specific AI code is isolated behind an interface.
-10. All schema changes use migrations.
+## 6. Local Development
 
-## 7. Failure Strategy
+Docker is optional.
 
-A worker must distinguish:
-
-- permanent invalid input
-- temporary infrastructure failure
-- low-confidence extraction
-- unsupported document structure
-
-Never silently convert failed extraction into a fabricated value.
-
-## 8. Deployment
-
-Development:
+Preferred minimum local setup:
 
 ```text
-Docker Compose
-├── web
-├── api
-├── worker
-├── postgres
-└── object storage
+Node.js
+Python
+PostgreSQL
 ```
 
-Production can split services across managed providers while retaining the same logical boundaries.
+Developers may use hosted development services for PostgreSQL and object storage.
+
+Docker Compose may be provided as an optional convenience, but no production feature may depend on Docker.
+
+## 7. Environment Variables
+
+Frontend:
+
+```text
+NEXT_PUBLIC_API_URL
+NEXT_PUBLIC_APP_URL
+```
+
+Backend:
+
+```text
+DATABASE_URL
+OBJECT_STORAGE_ENDPOINT
+OBJECT_STORAGE_BUCKET
+OBJECT_STORAGE_ACCESS_KEY
+OBJECT_STORAGE_SECRET_KEY
+LLM_API_KEY
+EMBEDDING_API_KEY
+APP_SECRET
+CORS_ORIGINS
+```
+
+Worker:
+
+```text
+DATABASE_URL
+OBJECT_STORAGE_ENDPOINT
+OBJECT_STORAGE_BUCKET
+OBJECT_STORAGE_ACCESS_KEY
+OBJECT_STORAGE_SECRET_KEY
+LLM_API_KEY
+EMBEDDING_API_KEY
+```
+
+Never expose server secrets through `NEXT_PUBLIC_*`.
+
+## 8. CORS
+
+Production API should allow only the deployed frontend origin.
+
+Example:
+
+```text
+https://prospect.example.com
+```
+
+Development can allow localhost origins.
+
+## 9. Health Checks
+
+API:
+
+```text
+GET /health
+```
+
+Worker should expose a platform-compatible health mechanism or heartbeat.
+
+Health checks must not perform expensive document processing.
+
+## 10. Observability
+
+At minimum log:
+
+- request ID
+- document ID
+- job ID
+- processing stage
+- duration
+- errors
+- AI provider errors
+
+Production should expose:
+
+- application logs
+- worker logs
+- database metrics where available
+- uptime/health monitoring
+
+## 11. Scaling
+
+Initial:
+
+```text
+1 frontend
+1 API instance
+1 worker
+1 managed PostgreSQL
+1 object store
+```
+
+Scale workers independently as document volume grows.
+
+Do not prematurely introduce Kubernetes or microservices.
+
+## 12. Security
+
+- private object storage
+- signed URLs
+- authentication
+- document ownership checks
+- rate limiting
+- file type validation
+- file size limits
+- secret management
+- HTTPS
+- database least-privilege credentials
+
+## 13. Architecture Principle
+
+Keep this boundary:
+
+```text
+Web UI
+   ↓
+API
+   ↓
+Domain / Data
+   ↓
+Worker / Evidence
+   ↓
+AI
+```
+
+AI must remain replaceable.

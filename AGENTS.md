@@ -2,7 +2,7 @@
 
 ## Project Mission
 
-Build Prospect as an evidence-first financial document intelligence platform.
+Build Prospect as an evidence-first financial document intelligence platform deployed as a real public web application.
 
 ## Non-Negotiable Rules
 
@@ -26,6 +26,43 @@ Build Prospect as an evidence-first financial document intelligence platform.
 18. Do not silently replace missing values with zero.
 19. Do not silently substitute incompatible accounting periods.
 20. Do not change architecture merely to make a single feature easier.
+
+## Deployment Rules
+
+1. Prospect is a web application intended to be publicly accessible.
+2. The primary frontend deployment target is Vercel.
+3. The API and worker should use a managed web-service platform such as Railway or Render.
+4. PostgreSQL must use a managed hosted database.
+5. PDF files must use managed private object storage.
+6. Docker is NOT a deployment requirement.
+7. Do not require the user to run Docker to use or deploy Prospect.
+8. Local Docker Compose may be used only as an optional development convenience.
+9. Production configuration must be reproducible through environment variables and platform configuration.
+10. Production services must expose health checks.
+11. Long-running PDF processing must run in a worker/background process, not inside a frontend request.
+12. Production secrets must be stored in the hosting platform's secret/environment-variable system.
+
+## Web Application Requirements
+
+The production path is:
+
+```text
+Browser
+  ↓
+Vercel / Next.js
+  ↓
+Hosted FastAPI API
+  ↓
+Hosted PostgreSQL
+  ↓
+Private Object Storage
+
+Hosted Worker
+  ↓
+PDF Processing
+  ↓
+PostgreSQL + Object Storage
+```
 
 ## Coding Style
 
@@ -72,7 +109,7 @@ document
 → source content
 ```
 
-## Pull Request / Change Summary
+## Change Summary
 
 Every substantial change should explain:
 
@@ -80,4 +117,5 @@ Every substantial change should explain:
 - why;
 - affected components;
 - tests run;
+- deployment implications;
 - known limitations.

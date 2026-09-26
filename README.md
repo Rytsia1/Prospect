@@ -1,15 +1,59 @@
 # Prospect — Pre-Coding Specification
 
-## Artifacts
+Prospect is an evidence-first financial document intelligence platform intended to be deployed as a real public website.
 
-- `PRD.md` — product requirements
-- `docs/MVP_SPEC.md` — exact MVP behavior and acceptance criteria
-- `docs/ARCHITECTURE.md` — system architecture
-- `docs/DATA_MODEL.md` — relational data model
-- `docs/API_SPEC.yaml` — API contract
-- `docs/FINANCIAL_CALCULATIONS.md` — deterministic financial formulas
-- `docs/AI_RAG_SPEC.md` — retrieval and AI behavior
-- `docs/UX_SPEC.md` — interface and interaction requirements
-- `docs/EVALUATION.md` — benchmark and testing strategy
-- `AGENTS.md` — coding-agent rules
-- `docs/ADR-*.md` — architecture decisions
+## Production Deployment
+
+```text
+Next.js
+  → Vercel
+
+FastAPI
+  → Railway / Render
+
+Worker
+  → Railway / Render
+
+PostgreSQL + pgvector
+  → Railway / Supabase
+
+Private PDF storage
+  → Cloudflare R2 / Supabase Storage
+```
+
+**Docker is not required for production or for users.**
+
+## Specification Artifacts
+
+- `PRD.md`
+- `docs/MVP_SPEC.md`
+- `docs/ARCHITECTURE.md`
+- `docs/DATA_MODEL.md`
+- `docs/API_SPEC.yaml`
+- `docs/FINANCIAL_CALCULATIONS.md`
+- `docs/AI_RAG_SPEC.md`
+- `docs/UX_SPEC.md`
+- `docs/EVALUATION.md`
+- `docs/DEPLOYMENT.md`
+- `AGENTS.md`
+- `docs/ADR-*.md`
+
+## First Vertical Slice
+
+```text
+Upload Annual Report
+      ↓
+Process PDF
+      ↓
+Extract Revenue
+      ↓
+Attach Page Evidence
+      ↓
+Extract Previous-Year Revenue
+      ↓
+Calculate Revenue Growth
+      ↓
+Display Fact + Calculation + Source
+      ↓
+Deploy to public website
+```

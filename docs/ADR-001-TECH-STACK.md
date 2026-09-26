@@ -6,40 +6,48 @@ Accepted
 
 ## Context
 
-Prospect requires PDF processing, financial data handling, relational storage, vector retrieval, and a web research interface.
+Prospect requires PDF processing, financial data handling, relational storage, vector retrieval, and a public web interface.
 
 ## Decision
 
 Use:
 
 - Next.js + TypeScript for web
+- Vercel for frontend deployment
 - FastAPI + Python for API/domain services
-- Python workers for document processing
+- Railway or Render for API deployment
+- Python worker on Railway or Render
 - PostgreSQL for relational storage
 - pgvector for embeddings
-- S3-compatible object storage for PDFs
-- Docker for local reproducibility
+- Cloudflare R2 or Supabase Storage for private PDFs
+- Docker only as an optional local development convenience
 
 ## Alternatives Considered
 
 ### Spring Boot
 
-Strong backend option and familiar for enterprise applications, but Python provides a more convenient ecosystem for PDF, OCR, table extraction, and NLP work.
+Strong enterprise backend option, but Python has a more convenient ecosystem for PDF, OCR, table extraction, and NLP.
 
-### Separate Vector Database
+### Dedicated Vector Database
 
-Deferred. pgvector keeps the MVP operationally simpler.
+Deferred. pgvector keeps the MVP simpler.
+
+### Docker-based production
+
+Deferred/rejected for the initial deployment because managed application services provide a simpler public deployment path.
 
 ## Consequences
 
 Positive:
 
-- strong document-processing ecosystem
-- clear separation between frontend and processing
-- relational + vector search in one database
-- portable deployment
+- practical document-processing ecosystem
+- public web deployment
+- low operational overhead
+- relational and vector storage together
+- clear worker boundary
 
 Negative:
 
-- multiple languages/runtime concerns are possible if other services are added
-- Python service requires careful domain typing and testing
+- multiple hosted providers may need configuration
+- recurring infrastructure costs
+- Python service requires careful typing and testing
