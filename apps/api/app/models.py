@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     Enum,
@@ -29,6 +30,7 @@ class DocumentType(enum.StrEnum):
 
 class DocumentStatus(enum.StrEnum):
     # Mirrors Document.status in docs/API_SPEC.yaml.
+    UPLOADING = "UPLOADING"  # signed URL issued, bytes not yet verified
     UPLOADED = "UPLOADED"
     QUEUED = "QUEUED"
     PROCESSING = "PROCESSING"
@@ -67,7 +69,8 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    email: Mapped[str] = mapped_column(String(320), unique=True)
+    # NULL for anonymous single-user-mode identities (app/auth.py).
+    email: Mapped[str | None] = mapped_column(String(320), unique=True)
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -76,6 +79,7 @@ class Document(Base):
     __table_args__ = (
         Index("ix_documents_user_id_created_at", "user_id", "created_at"),
         CheckConstraint("fiscal_year BETWEEN 1900 AND 2200", name="ck_documents_fiscal_year"),
+        CheckConstraint("size_bytes > 0", name="ck_documents_size_bytes"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -84,10 +88,11 @@ class Document(Base):
     document_type: Mapped[DocumentType] = mapped_column(_enum(DocumentType, "document_type"))
     fiscal_year: Mapped[int | None] = mapped_column(Integer)
     mime_type: Mapped[str] = mapped_column(String(100))
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
     # Private object key; never a public URL (AGENTS rule 14).
     storage_key: Mapped[str] = mapped_column(String(1024), unique=True)
     status: Mapped[DocumentStatus] = mapped_column(
-        _enum(DocumentStatus, "document_status"), default=DocumentStatus.UPLOADED
+        _enum(DocumentStatus, "document_status"), default=DocumentStatus.UPLOADING
     )
     processing_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _created_at()

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Comma-separated. Production must list only the deployed frontend origin.
     cors_origins: str = "http://localhost:3000"
     log_level: str = "INFO"
+    max_upload_bytes: int = 50 * 1024 * 1024
 
     @field_validator("database_url")
     @classmethod

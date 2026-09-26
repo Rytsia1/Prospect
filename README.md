@@ -34,11 +34,12 @@ docs/        Specifications and ADRs (source of truth)
 ## Prerequisites
 
 - Python 3.12+ and [uv](https://docs.astral.sh/uv/)
-- Node.js 22+ and npm
+- Node.js 22.18+ (24 recommended) and npm
 - PostgreSQL 15+ with the `pgvector` extension available. A local install or a hosted
   development database (Railway, Supabase) both work.
-- An S3-compatible private bucket (Cloudflare R2 in production). Only needed once document
-  upload lands; the API starts and tests pass with placeholder values.
+- An S3-compatible private bucket: Cloudflare R2 in production. For local development either
+  use an R2 dev bucket or run the in-process S3 emulator that ships with the dev dependencies
+  (see "Local object storage").
 
 ## Environment Variables
 
@@ -53,6 +54,7 @@ API (`apps/api/.env`, copied from `apps/api/.env.example`):
 | `APP_SECRET` | Application signing secret (long random string) |
 | `CORS_ORIGINS` | Comma-separated allowed origins; production = the Vercel domain only |
 | `LOG_LEVEL` | Optional, default `INFO` |
+| `MAX_UPLOAD_BYTES` | Optional upload limit, default 52428800 (50 MB) |
 
 Web (`apps/web/.env.local`, copied from `apps/web/.env.example`):
 
@@ -77,6 +79,41 @@ uv run uvicorn app.main:app --reload    # http://localhost:8000/health
 Production start command (Railway/Render):
 `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log`
 
+## Object Storage (Cloudflare R2)
+
+The bucket must stay private: no public access, no r2.dev URL. The API holds the credentials
+and hands the browser short-lived (15 minute) signed URLs; the browser PUTs the PDF straight to
+R2, then the API verifies the stored bytes (size + PDF signature) before accepting it.
+
+The browser upload needs a CORS rule on the bucket (R2 → bucket → Settings → CORS policy):
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://prospect.example.com"],
+    "AllowedMethods": ["PUT", "GET"],
+    "AllowedHeaders": ["Content-Type"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+Add `http://localhost:3000` to `AllowedOrigins` on a development bucket.
+
+### Local object storage
+
+Without an R2 dev bucket, run the S3 emulator from the API dev dependencies (moto):
+
+```bash
+cd apps/api
+uv run moto_server -H 127.0.0.1 -p 9000
+uv run python -c "import boto3; boto3.client('s3', endpoint_url='http://127.0.0.1:9000', aws_access_key_id='local', aws_secret_access_key='local', region_name='us-east-1').create_bucket(Bucket='prospect-documents')"
+```
+
+Then set `OBJECT_STORAGE_ENDPOINT=http://127.0.0.1:9000` and any non-empty access/secret keys.
+Data is in memory and lost when the emulator stops; it does not enforce access control, so it
+cannot demonstrate bucket privacy (R2 does).
+
 ## Run the Frontend
 
 ```bash
@@ -94,7 +131,8 @@ uv run pytest                           # unit tests
 uv run ruff format . && uv run ruff check . && uv run mypy
 ```
 
-Database constraint tests run when `TEST_DATABASE_URL` points to a migrated database:
+Database and upload-flow tests run when `TEST_DATABASE_URL` points to a migrated database
+(they start their own in-process S3 emulator):
 
 ```bash
 TEST_DATABASE_URL=postgresql://... uv run pytest
@@ -102,10 +140,17 @@ TEST_DATABASE_URL=postgresql://... uv run pytest
 
 ```bash
 cd apps/web
-npm run lint && npm run typecheck && npm run build
+npm run lint && npm run typecheck && npm test && npm run build
 ```
 
 CI (`.github/workflows/ci.yml`) runs all of the above against PostgreSQL + pgvector.
+
+## Identity (single-user mode)
+
+Until authentication lands, each browser gets an anonymous identity: `POST /api/v1/sessions`
+returns a token signed with `APP_SECRET`, stored in `localStorage` and sent as a bearer token.
+Every document query is scoped to that user, so documents are isolated per browser. Clearing
+browser storage or rotating `APP_SECRET` loses access to earlier uploads.
 
 ## Specification Artifacts
 

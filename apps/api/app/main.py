@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException
 
+from app import auth, documents
 from app.config import get_settings
 
 API_V1_PREFIX = "/api/v1"  # docs/API_SPEC.yaml `servers`; resource routers mount here.
@@ -40,6 +41,8 @@ logging.basicConfig(level=settings.log_level, handlers=[_handler], force=True)
 log = logging.getLogger("prospect.api")
 
 app = FastAPI(title="Prospect API", version="0.1.0")
+app.include_router(auth.router, prefix=API_V1_PREFIX)
+app.include_router(documents.router, prefix=API_V1_PREFIX)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -75,7 +78,9 @@ def _error(request: Request, status: int, code: str, message: str, details=None)
 
 @app.exception_handler(HTTPException)
 async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
-    code = HTTPStatus(exc.status_code).phrase.lower().replace(" ", "_")
+    code = getattr(exc, "code", None) or HTTPStatus(exc.status_code).phrase.lower().replace(
+        " ", "_"
+    )
     return _error(request, exc.status_code, code, str(exc.detail))
 
 

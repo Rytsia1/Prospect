@@ -40,6 +40,7 @@ def make_document(session: Session, **overrides) -> Document:
         filename="Annual_Report_2025.pdf",
         document_type=DocumentType.ANNUAL_REPORT,
         mime_type="application/pdf",
+        size_bytes=1024,
         storage_key=f"{user.id}/{uuid.uuid4()}.pdf",
         **overrides,
     )
@@ -54,8 +55,8 @@ def page(doc: Document, number: int) -> DocumentPage:
     )
 
 
-def test_new_document_defaults_to_uploaded(session):
-    assert make_document(session).status == DocumentStatus.UPLOADED
+def test_new_document_defaults_to_uploading(session):
+    assert make_document(session).status == DocumentStatus.UPLOADING
 
 
 def test_page_numbers_unique_per_document(session):

@@ -7,39 +7,118 @@ info:
 servers:
   - url: /api/v1
 
+security:
+  - sessionToken: []
+
+# Every non-2xx response body is an Error. A document owned by another user returns the
+# same 404 as a nonexistent one.
+
 paths:
+  /sessions:
+    post:
+      summary: Start an anonymous single-user-mode session (replaced by real auth later)
+      security: []
+      responses:
+        "201":
+          description: Signed session token for the Authorization header
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token]
+                properties:
+                  token:
+                    type: string
+
   /documents:
     post:
-      summary: Upload a financial document
+      summary: Create a document and a signed upload URL (direct-to-storage upload)
+      description: >
+        The browser PUTs the PDF to `upload.url` with `upload.headers`, then calls
+        POST /documents/{documentId}/complete. The URL expires at `upload.expires_at`.
       requestBody:
         required: true
         content:
-          multipart/form-data:
+          application/json:
             schema:
-              type: object
-              required: [file]
-              properties:
-                file:
-                  type: string
-                  format: binary
-                document_type:
-                  type: string
-                  enum: [annual_report, financial_statement, prospectus]
-                fiscal_year:
-                  type: integer
+              $ref: "#/components/schemas/DocumentCreate"
       responses:
         "201":
-          description: Document accepted
+          description: Document created in UPLOADING state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentUpload"
+        "413":
+          description: Declared size exceeds MAX_UPLOAD_BYTES (code file_too_large)
+        "415":
+          description: content_type is not application/pdf (code unsupported_file_type)
+
+    get:
+      summary: List the current user's documents, newest first
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Document list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Document"
+
+  /documents/{documentId}/complete:
+    post:
+      summary: Verify the uploaded bytes server-side and queue processing
+      description: >
+        Checks the stored object's size and PDF signature. Success sets UPLOADED and creates a
+        processing job. Idempotent once the document has left UPLOADING.
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Document (UPLOADED)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Document"
+        "409":
+          description: File not uploaded yet (code upload_not_found); safe to retry
+        "422":
+          description: Stored file is not a valid PDF or its size differs (code invalid_upload); document becomes FAILED
 
+  /documents/{documentId}/download-url:
     get:
-      summary: List user's documents
+      summary: Short-lived signed URL to read the private PDF
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
       responses:
         "200":
-          description: Document list
+          description: Signed URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, expires_at]
+                properties:
+                  url:
+                    type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+        "409":
+          description: File not available (UPLOADING or FAILED)
 
   /documents/{documentId}:
     get:
@@ -49,6 +128,10 @@ paths:
       responses:
         "200":
           description: Document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
 
     delete:
       summary: Delete a document
@@ -109,6 +192,11 @@ paths:
                 $ref: "#/components/schemas/ResearchAnswer"
 
 components:
+  securitySchemes:
+    sessionToken:
+      type: http
+      scheme: bearer
+
   parameters:
     DocumentId:
       name: documentId
@@ -119,18 +207,99 @@ components:
         format: uuid
 
   schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string
+            details:
+              type: array
+              items: {}
+
+    DocumentCreate:
+      type: object
+      required: [filename, content_type, size_bytes]
+      properties:
+        filename:
+          type: string
+          maxLength: 255
+        content_type:
+          type: string
+          enum: [application/pdf]
+        size_bytes:
+          type: integer
+          minimum: 1
+        document_type:
+          type: string
+          enum: [annual_report, financial_statement, prospectus]
+          default: annual_report
+        fiscal_year:
+          type: integer
+          nullable: true
+
+    DocumentUpload:
+      type: object
+      required: [document, upload]
+      properties:
+        document:
+          $ref: "#/components/schemas/Document"
+        upload:
+          type: object
+          required: [url, method, headers, expires_at]
+          properties:
+            url:
+              type: string
+            method:
+              type: string
+              enum: [PUT]
+            headers:
+              type: object
+              additionalProperties:
+                type: string
+            expires_at:
+              type: string
+              format: date-time
+
     Document:
       type: object
-      required: [id, filename, status]
+      required: [id, filename, document_type, mime_type, size_bytes, status, created_at, updated_at]
       properties:
         id:
           type: string
           format: uuid
         filename:
           type: string
+        document_type:
+          type: string
+          enum: [annual_report, financial_statement, prospectus]
+        fiscal_year:
+          type: integer
+          nullable: true
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
         status:
           type: string
-          enum: [UPLOADED, QUEUED, PROCESSING, EXTRACTING, INDEXING, READY, FAILED]
+          enum: [UPLOADING, UPLOADED, QUEUED, PROCESSING, EXTRACTING, INDEXING, READY, FAILED]
+        processing_error:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     ResearchQuery:
       type: object

@@ -36,7 +36,7 @@ ResearchSession
 | Column | Type | Notes |
 |---|---|---|
 | id | UUID | PK |
-| email | VARCHAR | unique |
+| email | VARCHAR | unique, nullable (anonymous single-user-mode sessions) |
 | created_at | TIMESTAMP | required |
 
 ### documents
@@ -49,9 +49,25 @@ ResearchSession
 | document_type | ENUM | annual_report, financial_statement, prospectus |
 | fiscal_year | INTEGER | nullable |
 | mime_type | VARCHAR | required |
+| size_bytes | BIGINT | required, > 0; verified against the stored object |
 | storage_key | VARCHAR | private object key |
-| status | ENUM | processing state |
+| status | ENUM | UPLOADING, UPLOADED, QUEUED, PROCESSING, EXTRACTING, INDEXING, READY, FAILED |
 | processing_error | TEXT | nullable |
+| created_at | TIMESTAMP | required |
+| updated_at | TIMESTAMP | required |
+
+### processing_jobs
+
+Database-backed job queue polled by the worker (DEPLOYMENT.md §5, option A).
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| document_id | UUID | FK documents, cascade |
+| status | ENUM | queued/running/succeeded/failed |
+| attempts | INTEGER | >= 0 |
+| last_error | TEXT | nullable |
+| locked_at | TIMESTAMP | nullable; worker claim time |
 | created_at | TIMESTAMP | required |
 | updated_at | TIMESTAMP | required |
 

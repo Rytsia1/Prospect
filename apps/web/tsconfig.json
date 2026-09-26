@@ -14,6 +14,7 @@
     "allowJs": false,
     "esModuleInterop": true,
     "plugins": [{ "name": "next" }],
+    "allowImportingTsExtensions": true,
     "paths": { "@/*": ["./*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],

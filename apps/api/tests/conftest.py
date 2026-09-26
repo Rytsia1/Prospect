@@ -10,3 +10,7 @@ for key, value in {
     "APP_SECRET": "test-app-secret",
 }.items():
     os.environ.setdefault(key, value)
+
+# DB tests run against TEST_DATABASE_URL (a migrated database), never DATABASE_URL.
+if os.getenv("TEST_DATABASE_URL"):
+    os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]

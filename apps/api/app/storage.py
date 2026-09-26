@@ -5,6 +5,7 @@ from typing import Literal, Protocol
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from app.config import get_settings
 
@@ -15,6 +16,8 @@ class ObjectStorage(Protocol):
     def upload(self, key: str, data: bytes, content_type: str) -> None: ...
     def download(self, key: str) -> bytes: ...
     def delete(self, key: str) -> None: ...
+    def size(self, key: str) -> int | None: ...
+    def read_prefix(self, key: str, length: int) -> bytes: ...
     def signed_url(self, key: str, method: SignedUrlMethod, expires_in: int = 900) -> str: ...
 
 
@@ -40,6 +43,21 @@ class S3ObjectStorage:
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)
+
+    def size(self, key: str) -> int | None:
+        """Object size in bytes, or None if the object does not exist."""
+        try:
+            return self.client.head_object(Bucket=self.bucket, Key=key)["ContentLength"]
+        except ClientError as e:
+            if e.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound"):
+                return None
+            raise
+
+    def read_prefix(self, key: str, length: int) -> bytes:
+        response = self.client.get_object(
+            Bucket=self.bucket, Key=key, Range=f"bytes=0-{length - 1}"
+        )
+        return response["Body"].read()
 
     def signed_url(self, key: str, method: SignedUrlMethod, expires_in: int = 900) -> str:
         operation = {"get": "get_object", "put": "put_object"}[method]
