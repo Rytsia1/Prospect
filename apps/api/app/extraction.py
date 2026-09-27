@@ -81,6 +81,21 @@ METRICS: dict[str, tuple[str, str, MetricKind, list[str]]] = {
         "stock",
         [r"total (?:equity|ekuitas)", r"jumlah ekuitas"],
     ),
+    "current_assets": (
+        "Total current assets",
+        "balance_sheet",
+        "stock",
+        [r"total current assets", r"(?:jumlah|total) aset lancar"],
+    ),
+    "current_liabilities": (
+        "Total current liabilities",
+        "balance_sheet",
+        "stock",
+        [
+            r"total current liabilities",
+            r"(?:jumlah|total) liabilitas (?:jangka pendek|lancar)",
+        ],
+    ),
     "cash": (
         "Cash and cash equivalents",
         "balance_sheet",
@@ -95,7 +110,15 @@ METRICS: dict[str, tuple[str, str, MetricKind, list[str]]] = {
     ),
 }
 # Metrics that cannot be negative in a set of accounts; a negative value needs human review.
-NON_NEGATIVE = {"revenue", "total_assets", "total_liabilities", "cash", "total_debt"}
+NON_NEGATIVE = {
+    "revenue",
+    "total_assets",
+    "total_liabilities",
+    "current_assets",
+    "current_liabilities",
+    "cash",
+    "total_debt",
+}
 MAX_ABS_VALUE = Decimal("1e18")  # larger than any real reported line item: a parsing error
 
 SCALES = {

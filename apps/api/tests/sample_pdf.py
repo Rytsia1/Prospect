@@ -18,7 +18,9 @@ TABLE = [
 BALANCE_SHEET = [
     ["", "Notes", "31 December 2025", "31 December 2024"],
     ["Cash and cash equivalents", "4", "3.120.500", "2.840.250"],
+    ["Total current assets", "", "12.450.000", "11.300.000"],
     ["Total assets", "", "45.600.000", "41.200.000"],
+    ["Total current liabilities", "", "9.960.000", "9.040.000"],
     ["Total borrowings", "12", "8.300.000", "9.100.000"],
     ["Total liabilities", "", "20.100.000", "19.300.000"],
     ["Retained earnings (deficit)", "", "(1.250.000)", "(980.000)"],

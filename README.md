@@ -99,11 +99,17 @@ backoff. A job whose worker died is reclaimed after a 15-minute lease, so docume
 in PROCESSING. Reprocessing replaces a document's pages/sections/chunks in one transaction.
 
 Financial facts (revenue, gross profit, operating income, net income, total assets,
-total liabilities, equity, cash, total debt) are extracted deterministically in the same
+current assets, total liabilities, current liabilities, equity, cash, total debt) are extracted deterministically in the same
 transaction, without an LLM (`app/extraction.py`). Each fact stores its value as NUMERIC, its
 period type, currency and scale, the value as printed, and evidence pointing to the exact row,
 page, section and chunk. Values whose currency, scale or period is not stated, or that conflict
 across pages, are kept as `needs_review` and are not shown as facts.
+
+Ratios (revenue growth, net margin, ROA, ROE, debt-to-equity, current ratio) are then computed
+from the accepted facts in the same transaction by `app/analytics.py`: Decimal only, in a fixed
+context, no LLM. Each result stores its formula and input facts, so every ratio leads back to
+the source pages. A missing input, zero denominator, or mismatched currency/period is stored as
+`not_possible` with a reason, never as zero. Rounding happens only in the UI.
 
 PDF parsing uses PyMuPDF, which is licensed AGPL-3.0 (commercial licenses are available from
 Artifex). Running it in a public web service carries AGPL obligations; review before launch.

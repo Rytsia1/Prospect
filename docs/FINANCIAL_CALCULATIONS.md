@@ -92,6 +92,9 @@ total_debt / equity
 
 The definition of `total_debt` must be explicit in the metric mapping.
 
+Mapping: `total_debt` is the total debt / total borrowings line exactly as the company reports
+it; it is never derived by summing components (`financial_metrics.description`).
+
 ## 10. Current Ratio
 
 ```text

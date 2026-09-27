@@ -271,12 +271,27 @@ paths:
 
   /documents/{documentId}/calculations:
     get:
-      summary: Get derived calculations
+      summary: Get deterministic ratios with their formula and source facts
+      description: >
+        Computed in application code from accepted facts, never by an LLM. value is a plain ratio
+        at full precision as a decimal string (0.181 = 18.1%); round only for display. A missing
+        input, a zero denominator, or incompatible inputs give status not_possible with a reason,
+        never a zero.
       parameters:
         - $ref: "#/components/parameters/DocumentId"
       responses:
         "200":
           description: Calculations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Calculation"
 
   /research/query:
     post:
@@ -394,6 +409,60 @@ components:
             unit:
               type: string
               nullable: true
+
+    Calculation:
+      type: object
+      required: [id, metric, name, formula_key, formula, period_type, period_label, status, value, unit, notes, inputs]
+      properties:
+        id:
+          type: string
+          format: uuid
+        metric:
+          type: string
+          enum: [revenue_growth, net_margin, roa, roe, debt_to_equity, current_ratio]
+        name:
+          type: string
+        formula_key:
+          type: string
+          enum: [revenue_growth, net_margin, roa_average_assets, roa_ending_assets, roe_average_equity, roe_ending_equity, debt_to_equity, current_ratio]
+          description: The *_ending_* variants are used, and labeled, only when the opening balance is missing
+        formula:
+          type: string
+        period_type:
+          type: string
+          enum: [annual, instant]
+        period_label:
+          type: string
+          description: FY2025 for annual ratios, the balance-sheet date for debt-to-equity and current ratio
+        status:
+          type: string
+          enum: [calculated, not_possible]
+        value:
+          type: string
+          nullable: true
+          description: Plain ratio, full precision; null unless calculated
+        unit:
+          type: string
+          enum: [percent, times]
+          description: Presentation only
+        reason_code:
+          type: string
+          nullable: true
+          enum: [MISSING_INPUT, DIVISION_BY_ZERO, INCOMPATIBLE_INPUTS, null]
+        reason:
+          type: string
+          nullable: true
+          description: e.g. "Total equity at 2025-12-31 was not found."
+        notes:
+          type: array
+          items:
+            type: string
+          description: Caveats, e.g. a negative denominator or the ending-balance variant
+        inputs:
+          type: array
+          description: Source facts (with evidence) used, or those found when not possible
+          items:
+            $ref: "#/components/schemas/FinancialFact"
 
     Error:
       type: object

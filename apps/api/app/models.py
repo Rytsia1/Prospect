@@ -303,6 +303,7 @@ class FinancialFact(Base):
             name="fk_financial_facts_evidence",
             ondelete="CASCADE",
         ),
+        UniqueConstraint("id", "document_id", name="uq_financial_facts_identity"),
         CheckConstraint("confidence BETWEEN 0 AND 1", name="ck_financial_facts_confidence"),
         # Currency is never guessed: an unstated currency cannot be authoritative.
         CheckConstraint(
@@ -334,3 +335,72 @@ class FinancialFact(Base):
     status: Mapped[FactStatus] = mapped_column(_enum(FactStatus, "fact_status"))
     review_reasons: Mapped[list] = mapped_column(JSONB, server_default="[]")
     created_at: Mapped[datetime] = _created_at()
+
+
+class CalculationStatus(enum.StrEnum):
+    CALCULATED = "calculated"
+    NOT_POSSIBLE = "not_possible"  # missing input, zero denominator, or incompatible inputs
+
+
+class Calculation(Base):
+    """A deterministic ratio computed from facts (app/analytics.py); never from an LLM."""
+
+    __tablename__ = "calculations"
+    __table_args__ = (
+        UniqueConstraint("id", "document_id", name="uq_calculations_identity"),
+        UniqueConstraint(
+            "document_id",
+            "metric_key",
+            "period_type",
+            "period_label",
+            name="uq_calculations_period",
+        ),
+        # A result exists exactly when the calculation was possible; never a stand-in zero.
+        CheckConstraint(
+            "(status = 'calculated') = (result_numeric IS NOT NULL)",
+            name="ck_calculations_result",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE", name="fk_calculations_document")
+    )
+    metric_key: Mapped[str] = mapped_column(String(64))  # e.g. roa
+    formula_key: Mapped[str] = mapped_column(String(64))  # e.g. roa_average_assets
+    period_type: Mapped[PeriodType] = mapped_column(_enum(PeriodType, "period_type"))
+    period_label: Mapped[str] = mapped_column(String(40))
+    status: Mapped[CalculationStatus] = mapped_column(
+        _enum(CalculationStatus, "calculation_status")
+    )
+    result_numeric: Mapped[Decimal | None] = mapped_column(Numeric)  # plain ratio, full precision
+    unit: Mapped[str] = mapped_column(String(16))  # presentation: percent | times
+    reason_code: Mapped[str | None] = mapped_column(String(32))  # MISSING_INPUT, ...
+    reason: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[list] = mapped_column(JSONB, server_default="[]")
+    created_at: Mapped[datetime] = _created_at()
+
+
+class CalculationInput(Base):
+    """The facts a calculation used; both must belong to the same document."""
+
+    __tablename__ = "calculation_inputs"
+    __table_args__ = (
+        Index("ix_calculation_inputs_fact", "financial_fact_id", "document_id"),
+        ForeignKeyConstraint(
+            ["calculation_id", "document_id"],
+            ["calculations.id", "calculations.document_id"],
+            name="fk_calculation_inputs_calculation",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["financial_fact_id", "document_id"],
+            ["financial_facts.id", "financial_facts.document_id"],
+            name="fk_calculation_inputs_fact",
+            ondelete="CASCADE",
+        ),
+    )
+
+    calculation_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    financial_fact_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    document_id: Mapped[uuid.UUID] = mapped_column()

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatBytes, isSettled, MAX_UPLOAD_BYTES, validatePdf } from "./documents.ts";
+import {
+  formatBytes,
+  formatRatio,
+  isSettled,
+  MAX_UPLOAD_BYTES,
+  roundDecimal,
+  validatePdf,
+} from "./documents.ts";
 
 const pdf = { name: "Annual Report 2025.pdf", type: "application/pdf", size: 1024 };
 
@@ -54,4 +61,22 @@ test("amounts format compactly without floating-point math", async () => {
   assert.equal(formatAmount("12400.50", "IDR"), "Rp12,400.5");
   // Beyond float precision: exact digits survive.
   assert.equal(formatExact("9007199254740993", "IDR"), "Rp9,007,199,254,740,993");
+});
+
+test("ratios round only at display, half away from zero, without floats", () => {
+  assert.equal(formatRatio("0.1809523809523809523809523809523810", "percent", true), "+18.10%");
+  assert.equal(formatRatio("-0.25", "percent", true), "−25.00%");
+  assert.equal(formatRatio("0.04009216589861751152073732718894009", "percent"), "4.01%");
+  assert.equal(formatRatio("1.25", "times"), "1.25x");
+  assert.equal(formatRatio("0.3254901960784313725490196078431373", "times"), "0.33x");
+  assert.equal(formatRatio("-2", "times"), "−2.00x");
+  assert.equal(formatRatio("0", "percent", true), "0.00%");
+  assert.equal(
+    formatRatio("0.0000000000000001110223024625156540423631668090820", "percent", true),
+    "0.00%",
+  );
+  assert.equal(roundDecimal("0.125", 0, 2), "0.13");
+  assert.equal(roundDecimal("-0.125", 0, 2), "−0.13");
+  assert.equal(roundDecimal("-0.001", 0, 2), "0.00");
+  assert.equal(roundDecimal("12345678901234567890.5", 0, 0), "12345678901234567891");
 });

@@ -142,6 +142,8 @@ export const METRIC_ORDER = [
   "operating_income",
   "net_income",
   "total_assets",
+  "current_assets",
+  "current_liabilities",
   "total_liabilities",
   "equity",
   "cash",
@@ -188,4 +190,40 @@ export function formatExact(value: string, currency: string | null): string {
   const { negative, digits, fraction } = splitDecimal(value);
   const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return `${negative ? "−" : ""}${currencyPrefix(currency)}${grouped}${fraction ? `.${fraction}` : ""}`;
+}
+
+export type Calculation = {
+  id: string;
+  metric: string;
+  name: string;
+  formula_key: string;
+  formula: string;
+  period_type: FinancialFact["period_type"];
+  period_label: string;
+  status: "calculated" | "not_possible";
+  value: string | null; // plain ratio at full precision, as a decimal string
+  unit: "percent" | "times";
+  reason_code: string | null;
+  reason: string | null;
+  notes: string[];
+  inputs: FinancialFact[];
+};
+
+/** value × 10^shift rounded half away from zero to `places` decimals, using integer math only. */
+export function roundDecimal(value: string, shift: number, places: number): string {
+  const negative = value.startsWith("-");
+  const [int, fraction = ""] = value.replace(/^[-+]/, "").split(".");
+  const keep = shift + places;
+  const scaled = BigInt(int + fraction.padEnd(keep + 1, "0").slice(0, keep + 1)); // one extra digit
+  const rounded = (scaled + 5n) / 10n;
+  const digits = rounded.toString().padStart(places + 1, "0");
+  const body = places ? `${digits.slice(0, -places)}.${digits.slice(-places)}` : digits;
+  return `${negative && rounded !== 0n ? "−" : ""}${body}`;
+}
+
+/** Display a stored ratio: 0.18095… → "18.10%" (or "+18.10%" for growth), 1.25 → "1.25x". */
+export function formatRatio(value: string, unit: Calculation["unit"], signed = false): string {
+  const text =
+    unit === "percent" ? `${roundDecimal(value, 2, 2)}%` : `${roundDecimal(value, 0, 2)}x`;
+  return signed && !text.startsWith("−") && !/^0\.00/.test(text) ? `+${text}` : text;
 }

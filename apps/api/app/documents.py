@@ -15,11 +15,15 @@ from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.analytics import FORMULAS, INPUT_ORDER, METRIC_ORDER
 from app.auth import CurrentUserId
 from app.config import get_settings
 from app.db import get_session
 from app.errors import ApiError
 from app.models import (
+    Calculation,
+    CalculationInput,
+    CalculationStatus,
     Document,
     DocumentPage,
     DocumentSection,
@@ -163,6 +167,27 @@ class FactOut(BaseModel):
 
 class FactList(BaseModel):
     items: list[FactOut]
+
+
+class CalculationOut(BaseModel):
+    id: uuid.UUID
+    metric: str  # revenue_growth, net_margin, roa, roe, debt_to_equity, current_ratio
+    name: str
+    formula_key: str  # e.g. roa_average_assets vs the labeled roa_ending_assets variant
+    formula: str
+    period_type: PeriodType
+    period_label: str
+    status: CalculationStatus
+    value: DecimalStr | None  # plain ratio at full precision; null unless calculated
+    unit: Literal["percent", "times"]  # presentation only; round at display time
+    reason_code: str | None  # MISSING_INPUT, DIVISION_BY_ZERO, INCOMPATIBLE_INPUTS
+    reason: str | None
+    notes: list[str]
+    inputs: list[FactOut]  # the source facts; each carries its evidence
+
+
+class CalculationList(BaseModel):
+    items: list[CalculationOut]
 
 
 def _expires_at() -> datetime:
@@ -335,10 +360,8 @@ def list_sections(
     return SectionList(items=[SectionOut.model_validate(s) for s in sections])
 
 
-@router.get("/{document_id}/metrics")
-def list_facts(document_id: uuid.UUID, user_id: CurrentUserId, session: DbSession) -> FactList:
-    """Extracted financial facts with their evidence. needs_review items are not facts."""
-    _owned_document(session, user_id, document_id)
+def _facts(session: Session, document_id: uuid.UUID) -> list[FactOut]:
+    """The document's facts with evidence; callers must have passed _owned_document."""
     rows = session.execute(
         select(FinancialFact, FinancialMetric, Evidence, DocumentPage, SectionRow)
         .join(FinancialMetric, FinancialMetric.id == FinancialFact.metric_id)
@@ -348,36 +371,87 @@ def list_facts(document_id: uuid.UUID, user_id: CurrentUserId, session: DbSessio
         .where(FinancialFact.document_id == document_id)
         .order_by(FinancialMetric.category, FinancialMetric.key, FinancialFact.fiscal_year.desc())
     )
-    return FactList(
-        items=[
-            FactOut(
-                id=fact.id,
-                metric=metric.key,
-                metric_name=metric.name,
-                value=fact.value_numeric,
-                currency=fact.currency,
-                scale=fact.scale,
-                original_text=fact.original_text,
-                period_type=fact.period_type,
-                period_label=fact.period_label,
-                period_end=fact.period_end,
-                fiscal_year=fact.fiscal_year,
-                confidence=fact.confidence,
-                status=fact.status,
-                review_reasons=fact.review_reasons,
-                extraction_method=fact.extraction_method,
-                evidence=EvidenceOut(
-                    id=evidence.id,
-                    page_number=evidence.page_number,
-                    page_label=page.page_metadata.get("label"),
-                    section_title=section.title,
-                    chunk_id=evidence.chunk_id,
-                    kind=evidence.evidence_type.value,
-                    content=evidence.content,
-                    header=evidence.locator.get("header"),
-                    unit=evidence.locator.get("unit"),
-                ),
-            )
-            for fact, metric, evidence, page, section in rows
-        ]
+    return [
+        FactOut(
+            id=fact.id,
+            metric=metric.key,
+            metric_name=metric.name,
+            value=fact.value_numeric,
+            currency=fact.currency,
+            scale=fact.scale,
+            original_text=fact.original_text,
+            period_type=fact.period_type,
+            period_label=fact.period_label,
+            period_end=fact.period_end,
+            fiscal_year=fact.fiscal_year,
+            confidence=fact.confidence,
+            status=fact.status,
+            review_reasons=fact.review_reasons,
+            extraction_method=fact.extraction_method,
+            evidence=EvidenceOut(
+                id=evidence.id,
+                page_number=evidence.page_number,
+                page_label=page.page_metadata.get("label"),
+                section_title=section.title,
+                chunk_id=evidence.chunk_id,
+                kind=evidence.evidence_type.value,
+                content=evidence.content,
+                header=evidence.locator.get("header"),
+                unit=evidence.locator.get("unit"),
+            ),
+        )
+        for fact, metric, evidence, page, section in rows
+    ]
+
+
+@router.get("/{document_id}/metrics")
+def list_facts(document_id: uuid.UUID, user_id: CurrentUserId, session: DbSession) -> FactList:
+    """Extracted financial facts with their evidence. needs_review items are not facts."""
+    _owned_document(session, user_id, document_id)
+    return FactList(items=_facts(session, document_id))
+
+
+@router.get("/{document_id}/calculations")
+def list_calculations(
+    document_id: uuid.UUID, user_id: CurrentUserId, session: DbSession
+) -> CalculationList:
+    """Deterministic ratios, each with its formula and the source facts (and their evidence)."""
+    _owned_document(session, user_id, document_id)
+    facts = {f.id: f for f in _facts(session, document_id)}
+    inputs: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for calculation_id, fact_id in session.execute(
+        select(CalculationInput.calculation_id, CalculationInput.financial_fact_id).where(
+            CalculationInput.document_id == document_id
+        )
+    ):
+        inputs.setdefault(calculation_id, []).append(fact_id)
+    calculations = session.scalars(
+        select(Calculation).where(Calculation.document_id == document_id)
     )
+    items = []
+    for c in calculations:
+        _, name, formula, _ = FORMULAS[c.formula_key]
+        used = sorted(
+            (facts[i] for i in inputs.get(c.id, [])),
+            key=lambda f: (INPUT_ORDER.index(f.metric), f.period_label),
+        )
+        items.append(
+            CalculationOut(
+                id=c.id,
+                metric=c.metric_key,
+                name=name,
+                formula_key=c.formula_key,
+                formula=formula,
+                period_type=c.period_type,
+                period_label=c.period_label,
+                status=c.status,
+                value=c.result_numeric,
+                unit=c.unit,
+                reason_code=c.reason_code,
+                reason=c.reason,
+                notes=c.notes,
+                inputs=used,
+            )
+        )
+    items.sort(key=lambda i: (METRIC_ORDER.index(i.metric), i.period_label))
+    return CalculationList(items=items)

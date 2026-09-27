@@ -271,13 +271,15 @@ def test_worker_stores_facts_linked_to_page_section_and_chunk(storage, report_by
             .join(DocumentPage, DocumentPage.id == Evidence.page_id)
             .where(FinancialFact.document_id == doc_id)
         ).all()
-    assert len(rows) == 18
+    assert len(rows) == 22
     assert {key for _, key, *_ in rows} == {
         "revenue",
         "gross_profit",
         "operating_income",
         "net_income",
         "total_assets",
+        "current_assets",
+        "current_liabilities",
         "total_liabilities",
         "equity",
         "cash",
@@ -296,15 +298,16 @@ def test_worker_stores_facts_linked_to_page_section_and_chunk(storage, report_by
 
 
 def test_reprocessing_does_not_duplicate_facts(storage, report_bytes):
-    from app.models import Evidence, FinancialFact
+    from app.models import Calculation, Evidence, FinancialFact
 
     doc_id = uploaded_document(storage, report_bytes)
     process_next(storage)
     age_job(doc_id, status=JobStatus.QUEUED, updated_at=datetime.now(UTC) - timedelta(hours=1))
     process_next(storage)
     with SessionLocal() as s:
+        assert s.scalar(select(func.count()).where(Calculation.document_id == doc_id)) == 12
         for model in (FinancialFact, Evidence):
-            assert s.scalar(select(func.count()).where(model.document_id == doc_id)) == 18
+            assert s.scalar(select(func.count()).where(model.document_id == doc_id)) == 22
 
 
 def test_metrics_api_returns_facts_with_evidence_to_owner_only(storage, report_bytes):
@@ -315,7 +318,7 @@ def test_metrics_api_returns_facts_with_evidence_to_owner_only(storage, report_b
 
     response = client.get(f"/api/v1/documents/{doc_id}/metrics", headers=owner)
     items = response.json()["items"]
-    assert len(items) == 18
+    assert len(items) == 22
     revenue = next(i for i in items if i["metric"] == "revenue" and i["period_label"] == "FY2025")
     assert revenue["value"] == "12400000000000"  # a decimal string, never a JSON float
     assert (revenue["currency"], revenue["status"], revenue["period_type"]) == (
@@ -331,3 +334,46 @@ def test_metrics_api_returns_facts_with_evidence_to_owner_only(storage, report_b
 
     denied = client.get(f"/api/v1/documents/{doc_id}/metrics", headers=intruder)
     assert denied.status_code == 404
+
+
+def test_calculations_api_returns_ratios_with_source_facts_to_owner_only(storage, report_bytes):
+    owner, owner_id = session_headers()
+    intruder, _ = session_headers()
+    doc_id = uploaded_document(storage, report_bytes, user_id=owner_id)
+    process_next(storage)
+
+    items = client.get(f"/api/v1/documents/{doc_id}/calculations", headers=owner).json()["items"]
+    by = {(i["metric"], i["period_label"]): i for i in items}
+    assert len(items) == 12
+
+    growth = by[("revenue_growth", "FY2025")]
+    assert growth["status"] == "calculated" and growth["unit"] == "percent"
+    assert growth["value"] == "0.1809523809523809523809523809523810"  # 1,900 / 10,500, a string
+    assert {(i["metric"], i["period_label"]) for i in growth["inputs"]} == {
+        ("revenue", "FY2024"),
+        ("revenue", "FY2025"),
+    }
+    assert all(i["evidence"]["page_number"] == 2 for i in growth["inputs"])
+
+    # No FY2023 revenue: not possible, never zero; the fact that was found is still shown.
+    missing = by[("revenue_growth", "FY2024")]
+    assert (missing["status"], missing["value"], missing["reason_code"]) == (
+        "not_possible",
+        None,
+        "MISSING_INPUT",
+    )
+    assert missing["reason"] == "Revenue for FY2023 was not found."
+    assert [i["period_label"] for i in missing["inputs"]] == ["FY2024"]
+
+    roa = by[("roa", "FY2025")]
+    assert roa["formula_key"] == "roa_average_assets"
+    assert roa["value"] == "0.04009216589861751152073732718894009"  # 1.74 / 43.4
+    assert {i["evidence"]["page_number"] for i in roa["inputs"]} == {2, 5}
+    # FY2024 has no opening balance sheet: a labeled ending-assets variant, never the average.
+    assert by[("roa", "FY2024")]["formula_key"] == "roa_ending_assets"
+    assert by[("roa", "FY2024")]["notes"]
+    assert by[("current_ratio", "2025-12-31")]["value"] == "1.25"
+    assert by[("debt_to_equity", "2025-12-31")]["unit"] == "times"
+
+    response = client.get(f"/api/v1/documents/{doc_id}/calculations", headers=intruder)
+    assert response.status_code == 404

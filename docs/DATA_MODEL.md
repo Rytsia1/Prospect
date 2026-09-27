@@ -180,15 +180,24 @@ Unique: one accepted fact per (document, metric, period_type, period_label).
 
 ### calculations
 
-| Column | Type |
-|---|---|
-| id | UUID |
-| document_id | UUID |
-| metric_key | VARCHAR |
-| formula_key | VARCHAR |
-| result_numeric | NUMERIC |
-| unit | VARCHAR |
-| created_at | TIMESTAMP |
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| document_id | UUID | FK |
+| metric_key | VARCHAR | revenue_growth, net_margin, roa, roe, debt_to_equity, current_ratio |
+| formula_key | VARCHAR | e.g. roa_average_assets, or the labeled roa_ending_assets variant |
+| period_type | ENUM | annual / instant |
+| period_label | VARCHAR | FY2025 or the balance-sheet date |
+| status | ENUM | calculated / not_possible |
+| result_numeric | NUMERIC | plain ratio, full precision; NULL exactly when not_possible (check constraint) |
+| unit | VARCHAR | presentation only: percent / times |
+| reason_code | VARCHAR | MISSING_INPUT / DIVISION_BY_ZERO / INCOMPATIBLE_INPUTS |
+| reason | TEXT | e.g. "Total equity at 2025-12-31 was not found." |
+| notes | JSONB | caveats (negative denominator, ending-balance variant) |
+| created_at | TIMESTAMP | |
+
+Unique: one calculation per (document, metric_key, period_type, period_label). Recomputed with
+the facts on every (re)processing.
 
 ### calculation_inputs
 
@@ -196,6 +205,10 @@ Unique: one accepted fact per (document, metric, period_type, period_label).
 |---|---|
 | calculation_id | UUID |
 | financial_fact_id | UUID |
+| document_id | UUID |
+
+Composite FKs (calculation_id, document_id) and (financial_fact_id, document_id) keep a
+calculation and its inputs in the same document.
 
 Composite PK:
 

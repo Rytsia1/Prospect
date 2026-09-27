@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { CalculationsPanel } from "@/components/calculations-panel";
 import { EvidenceCard, FactsPanel } from "@/components/facts-panel";
 import { PageViewer } from "@/components/page-viewer";
 import { StatusBadge } from "@/components/status-badge";
@@ -162,6 +163,7 @@ export function DocumentDetail({ id, initialPage }: { id: string; initialPage: n
       {document.status === "READY" ? (
         <>
           <FactsPanel documentId={document.id} onShowEvidence={showEvidence} />
+          <CalculationsPanel documentId={document.id} onShowEvidence={showEvidence} />
           <div id="evidence-view" className="scroll-mt-4 space-y-3">
             {evidence && <EvidenceCard fact={evidence} onClose={() => setEvidence(null)} />}
             <PageViewer

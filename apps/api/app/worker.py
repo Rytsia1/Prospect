@@ -21,11 +21,15 @@ from pathlib import Path
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
+from app.analytics import FactInput, calculate
 from app.config import get_settings
 from app.db import SessionLocal
 from app.extraction import extract_facts
 from app.logs import configure_logging
 from app.models import (
+    Calculation,
+    CalculationInput,
+    CalculationStatus,
     Document,
     DocumentChunk,
     DocumentPage,
@@ -141,7 +145,14 @@ def _store(job_id: uuid.UUID, document_id: uuid.UUID, pages: list[ParsedPage]) -
     blocks = {(p.number, b.index): b for p in pages for b in p.blocks}
 
     with SessionLocal() as session, session.begin():
-        for model in (FinancialFact, Evidence, DocumentChunk, DocumentSection, DocumentPage):
+        for model in (
+            Calculation,
+            FinancialFact,
+            Evidence,
+            DocumentChunk,
+            DocumentSection,
+            DocumentPage,
+        ):
             session.execute(delete(model).where(model.document_id == document_id))
         session.add_all(
             DocumentPage(
@@ -184,6 +195,7 @@ def _store(job_id: uuid.UUID, document_id: uuid.UUID, pages: list[ParsedPage]) -
         session.flush()  # evidence references chunks
 
         metric_ids = dict(session.execute(select(FinancialMetric.key, FinancialMetric.id)).all())
+        accepted: list[FactInput] = []
         for fact in facts:
             c = fact.candidate
             evidence = Evidence(
@@ -206,25 +218,63 @@ def _store(job_id: uuid.UUID, document_id: uuid.UUID, pages: list[ParsedPage]) -
             )
             session.add(evidence)
             session.flush()  # the fact references its evidence
-            session.add(
-                FinancialFact(
-                    document_id=document_id,
-                    metric_id=metric_ids[c.metric],
-                    evidence_id=evidence.id,
-                    value_numeric=c.amount.value,
-                    currency=c.amount.currency,
-                    scale=c.amount.scale,
-                    original_text=c.amount.original_text[:100],
-                    original_unit=c.unit_text,
-                    period_type=PeriodType(c.period.type),
-                    period_end=c.period.end,
-                    period_label=c.period.label,
-                    fiscal_year=c.period.fiscal_year,
-                    confidence=fact.confidence,
-                    extraction_method="parser",
-                    status=FactStatus(fact.status),
-                    review_reasons=fact.review_reasons,
+            row = FinancialFact(
+                id=uuid.uuid4(),
+                document_id=document_id,
+                metric_id=metric_ids[c.metric],
+                evidence_id=evidence.id,
+                value_numeric=c.amount.value,
+                currency=c.amount.currency,
+                scale=c.amount.scale,
+                original_text=c.amount.original_text[:100],
+                original_unit=c.unit_text,
+                period_type=PeriodType(c.period.type),
+                period_end=c.period.end,
+                period_label=c.period.label,
+                fiscal_year=c.period.fiscal_year,
+                confidence=fact.confidence,
+                extraction_method="parser",
+                status=FactStatus(fact.status),
+                review_reasons=fact.review_reasons,
+            )
+            session.add(row)
+            if row.status == FactStatus.ACCEPTED and row.currency:
+                accepted.append(
+                    FactInput(
+                        row.id,
+                        c.metric,
+                        row.value_numeric,
+                        row.currency,
+                        c.period.type,
+                        c.period.label,
+                        c.period.end,
+                        c.period.fiscal_year,
+                    )
                 )
+        session.flush()  # calculation inputs reference the facts
+        calculations = calculate(accepted)
+        for result in calculations:
+            calculation = Calculation(
+                id=uuid.uuid4(),
+                document_id=document_id,
+                metric_key=result.metric,
+                formula_key=result.formula_key,
+                period_type=PeriodType(result.period_type),
+                period_label=result.period_label,
+                status=CalculationStatus(result.status),
+                result_numeric=result.value,
+                unit=result.unit,
+                reason_code=result.reason_code,
+                reason=result.reason,
+                notes=list(result.notes),
+            )
+            session.add(calculation)
+            session.flush()
+            session.add_all(
+                CalculationInput(
+                    calculation_id=calculation.id, financial_fact_id=i, document_id=document_id
+                )
+                for i in result.input_ids
             )
         log.info(
             "financial extraction",
@@ -234,6 +284,8 @@ def _store(job_id: uuid.UUID, document_id: uuid.UUID, pages: list[ParsedPage]) -
                     "accepted": sum(f.status == "accepted" for f in facts),
                     "needs_review": sum(f.status == "needs_review" for f in facts),
                     "rejected": len(rejections),
+                    "calculated": sum(r.status == "calculated" for r in calculations),
+                    "not_possible": sum(r.status == "not_possible" for r in calculations),
                     "rejections": [f"p{r.page_number}: {r.reason}" for r in rejections[:20]],
                 }
             },

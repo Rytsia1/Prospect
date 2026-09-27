@@ -17,7 +17,7 @@ function byMetricThenPeriod(a: FinancialFact, b: FinancialFact): number {
   return metric || b.period_label.localeCompare(a.period_label); // newest period first
 }
 
-function pageText(fact: FinancialFact): string {
+export function pageText(fact: FinancialFact): string {
   const label = printedLabel({
     page_number: fact.evidence.page_number,
     label: fact.evidence.page_label,
