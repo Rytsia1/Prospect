@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ApiError, api } from "@/lib/api";
 import {
@@ -10,13 +9,34 @@ import {
   printedLabel,
 } from "@/lib/documents";
 
-type Props = { documentId: string; initialPage: number };
+type Props = {
+  documentId: string;
+  page: number;
+  onPageChange: (page: number) => void;
+  highlight?: string | null; // verbatim evidence text to mark on the page
+};
 
-export function PageViewer({ documentId, initialPage }: Props) {
-  const router = useRouter();
+/** The page text with the first occurrence of `highlight` marked. */
+function Highlighted({ text, highlight }: { text: string; highlight?: string | null }) {
+  const at = highlight ? text.indexOf(highlight) : -1;
+  if (!highlight || at < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, at)}
+      <mark
+        ref={(el) => el?.scrollIntoView({ block: "center" })}
+        className="rounded bg-blue-100 px-0.5 ring-1 ring-fact"
+      >
+        {highlight}
+      </mark>
+      {text.slice(at + highlight.length)}
+    </>
+  );
+}
+
+export function PageViewer({ documentId, page: current, onPageChange, highlight }: Props) {
   const [pages, setPages] = useState<PageSummary[] | null>(null);
   const [sections, setSections] = useState<DocumentSection[]>([]);
-  const [current, setCurrent] = useState(initialPage);
   const [page, setPage] = useState<DocumentPage | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,10 +67,7 @@ export function PageViewer({ documentId, initialPage }: Props) {
     };
   }, [documentId, pageNumber, total]);
 
-  function go(n: number) {
-    setCurrent(n);
-    router.replace(`?page=${n}`, { scroll: false }); // shareable link to this page
-  }
+  const go = onPageChange;
 
   if (error) {
     return (
@@ -163,7 +180,7 @@ export function PageViewer({ documentId, initialPage }: Props) {
             </p>
           ) : page.text ? (
             <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
-              {page.text}
+              <Highlighted text={page.text} highlight={highlight} />
             </pre>
           ) : (
             <p className="text-sm text-slate-600">

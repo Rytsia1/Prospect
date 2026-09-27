@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { EvidenceCard, FactsPanel } from "@/components/facts-panel";
 import { PageViewer } from "@/components/page-viewer";
 import { StatusBadge } from "@/components/status-badge";
 import { ApiError, api } from "@/lib/api";
 import {
   DOCUMENT_TYPE_LABEL,
+  type FinancialFact,
   formatBytes,
   formatDate,
   isSettled,
@@ -19,6 +22,20 @@ export function DocumentDetail({ id, initialPage }: { id: string; initialPage: n
   const [document, setDocument] = useState<ProspectDocument | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [opening, setOpening] = useState(false);
+  const router = useRouter();
+  const [page, setPage] = useState(initialPage);
+  const [evidence, setEvidence] = useState<FinancialFact | null>(null);
+
+  function goToPage(n: number) {
+    setPage(n);
+    router.replace(`?page=${n}`, { scroll: false }); // shareable link to this page
+  }
+
+  function showEvidence(fact: FinancialFact) {
+    setEvidence(fact);
+    goToPage(fact.evidence.page_number);
+    window.document.getElementById("evidence-view")?.scrollIntoView({ behavior: "smooth" });
+  }
 
   const load = useCallback(async () => {
     try {
@@ -143,7 +160,18 @@ export function DocumentDetail({ id, initialPage }: { id: string; initialPage: n
       </dl>
 
       {document.status === "READY" ? (
-        <PageViewer documentId={document.id} initialPage={initialPage} />
+        <>
+          <FactsPanel documentId={document.id} onShowEvidence={showEvidence} />
+          <div id="evidence-view" className="scroll-mt-4 space-y-3">
+            {evidence && <EvidenceCard fact={evidence} onClose={() => setEvidence(null)} />}
+            <PageViewer
+              documentId={document.id}
+              page={page}
+              onPageChange={goToPage}
+              highlight={evidence?.evidence.page_number === page ? evidence.evidence.content : null}
+            />
+          </div>
+        </>
       ) : (
         document.status !== "FAILED" && (
           <p className="text-sm text-slate-500">

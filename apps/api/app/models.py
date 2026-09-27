@@ -2,17 +2,20 @@
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -46,6 +49,23 @@ class PageExtractionStatus(enum.StrEnum):
     SUCCESS = "success"
     PARTIAL = "partial"
     FAILED = "failed"
+
+
+class FactStatus(enum.StrEnum):
+    ACCEPTED = "accepted"  # authoritative: may be shown as a FACT and used in calculations
+    NEEDS_REVIEW = "needs_review"  # kept for audit; never presented as a fact
+
+
+class PeriodType(enum.StrEnum):
+    ANNUAL = "annual"
+    QUARTER = "quarter"
+    INTERIM = "interim"  # other durations, e.g. nine months
+    INSTANT = "instant"  # balance-sheet date
+
+
+class EvidenceType(enum.StrEnum):
+    TABLE_ROW = "table_row"
+    TEXT_LINE = "text_line"
 
 
 class JobStatus(enum.StrEnum):
@@ -148,6 +168,7 @@ class DocumentChunk(Base):
     __tablename__ = "document_chunks"
     __table_args__ = (
         UniqueConstraint("page_id", "chunk_index"),
+        UniqueConstraint("id", "page_id", name="uq_document_chunks_page_identity"),
         CheckConstraint("chunk_index >= 0", name="ck_document_chunks_chunk_index"),
         CheckConstraint(
             "block_start >= 0 AND block_end >= block_start", name="ck_document_chunks_blocks"
@@ -203,3 +224,113 @@ class ProcessingJob(Base):
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
+
+
+class FinancialMetric(Base):
+    """Metric definitions (seeded by migration 0004)."""
+
+    __tablename__ = "financial_metrics"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(64), unique=True)
+    name: Mapped[str] = mapped_column(String(120))
+    category: Mapped[str] = mapped_column(String(40))
+    description: Mapped[str] = mapped_column(Text)
+
+
+class Evidence(Base):
+    """The exact source of a fact: a row on a page, inside a section and a chunk."""
+
+    __tablename__ = "evidence"
+    __table_args__ = (
+        Index("ix_evidence_document_id_page_id", "document_id", "page_id"),
+        UniqueConstraint("id", "document_id", name="uq_evidence_identity"),
+        ForeignKeyConstraint(
+            ["page_id", "document_id", "page_number"],
+            ["document_pages.id", "document_pages.document_id", "document_pages.page_number"],
+            name="fk_evidence_page",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["section_id", "document_id"],
+            ["document_sections.id", "document_sections.document_id"],
+            name="fk_evidence_section",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["chunk_id", "page_id"],
+            ["document_chunks.id", "document_chunks.page_id"],
+            name="fk_evidence_chunk",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE", name="fk_evidence_document")
+    )
+    page_id: Mapped[uuid.UUID] = mapped_column()
+    page_number: Mapped[int] = mapped_column(Integer)
+    section_id: Mapped[uuid.UUID] = mapped_column()
+    chunk_id: Mapped[uuid.UUID] = mapped_column()
+    evidence_type: Mapped[EvidenceType] = mapped_column(_enum(EvidenceType, "evidence_type"))
+    content: Mapped[str] = mapped_column(Text)  # verbatim source row; a substring of the page text
+    bbox_json: Mapped[list | None] = mapped_column(JSONB)  # [x0, y0, x1, y1] of the source block
+    # block_index, row_index, column_index, header (period header text), unit (unit statement)
+    locator: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class FinancialFact(Base):
+    __tablename__ = "financial_facts"
+    __table_args__ = (
+        Index(
+            "ix_financial_facts_document_metric_period", "document_id", "metric_id", "period_end"
+        ),
+        # One authoritative value per metric and period in a document.
+        Index(
+            "uq_financial_facts_accepted",
+            "document_id",
+            "metric_id",
+            "period_type",
+            "period_label",
+            unique=True,
+            postgresql_where="status = 'accepted'",
+        ),
+        ForeignKeyConstraint(
+            ["evidence_id", "document_id"],
+            ["evidence.id", "evidence.document_id"],
+            name="fk_financial_facts_evidence",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("confidence BETWEEN 0 AND 1", name="ck_financial_facts_confidence"),
+        # Currency is never guessed: an unstated currency cannot be authoritative.
+        CheckConstraint(
+            "status <> 'accepted' OR currency IS NOT NULL", name="ck_financial_facts_currency"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE", name="fk_financial_facts_document")
+    )
+    metric_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("financial_metrics.id"))
+    evidence_id: Mapped[uuid.UUID] = mapped_column()  # required: no fact without evidence
+    # Full value in currency units (scale applied), sign preserved. NUMERIC, never float.
+    value_numeric: Mapped[Decimal] = mapped_column(Numeric)
+    currency: Mapped[str | None] = mapped_column(String(3))
+    scale: Mapped[str] = mapped_column(String(16))  # presentation scale in the source
+    original_text: Mapped[str] = mapped_column(String(100))  # the cell as printed, e.g. "(1,250)"
+    original_unit: Mapped[str | None] = mapped_column(
+        Text
+    )  # e.g. "(expressed in millions of Rupiah)"
+    period_type: Mapped[PeriodType] = mapped_column(_enum(PeriodType, "period_type"))
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)  # NULL when only the year is stated
+    period_label: Mapped[str] = mapped_column(String(40))
+    fiscal_year: Mapped[int | None] = mapped_column(Integer)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4))
+    extraction_method: Mapped[str] = mapped_column(String(20))
+    status: Mapped[FactStatus] = mapped_column(_enum(FactStatus, "fact_status"))
+    review_reasons: Mapped[list] = mapped_column(JSONB, server_default="[]")
+    created_at: Mapped[datetime] = _created_at()

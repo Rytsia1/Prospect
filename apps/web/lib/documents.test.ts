@@ -42,3 +42,16 @@ test("printed labels show only when they differ from the physical page", async (
   assert.equal(printedLabel({ page_number: 2, label: "2" }), null);
   assert.equal(printedLabel({ page_number: 2, label: null }), null);
 });
+
+test("amounts format compactly without floating-point math", async () => {
+  const { formatAmount, formatExact } = await import("./documents.ts");
+  assert.equal(formatAmount("12400000000000", "IDR"), "Rp12.4T");
+  assert.equal(formatAmount("1740000000000", "IDR"), "Rp1.74T");
+  assert.equal(formatAmount("1745000000000", "IDR"), "Rp1.75T"); // rounds half up
+  assert.equal(formatAmount("-1250000000", "IDR"), "−Rp1.25B"); // a loss stays negative
+  assert.equal(formatAmount("3120500000000", "USD"), "US$3.12T");
+  assert.equal(formatAmount("12400", null), "12,400");
+  assert.equal(formatAmount("12400.50", "IDR"), "Rp12,400.5");
+  // Beyond float precision: exact digits survive.
+  assert.equal(formatExact("9007199254740993", "IDR"), "Rp9,007,199,254,740,993");
+});

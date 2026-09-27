@@ -104,3 +104,88 @@ export type DocumentSection = {
 export function printedLabel(page: { page_number: number; label: string | null }): string | null {
   return page.label && page.label !== String(page.page_number) ? page.label : null;
 }
+
+export type FactStatus = "accepted" | "needs_review";
+
+export type FinancialFact = {
+  id: string;
+  metric: string;
+  metric_name: string;
+  value: string; // decimal string, full value in currency units; never parsed into a float
+  currency: string | null;
+  scale: string;
+  original_text: string;
+  period_type: "annual" | "quarter" | "interim" | "instant";
+  period_label: string;
+  period_end: string | null;
+  fiscal_year: number | null;
+  confidence: string;
+  status: FactStatus;
+  review_reasons: string[];
+  extraction_method: string;
+  evidence: {
+    id: string;
+    page_number: number;
+    page_label: string | null;
+    section_title: string | null;
+    chunk_id: string;
+    kind: string;
+    content: string;
+    header: string | null;
+    unit: string | null;
+  };
+};
+
+export const METRIC_ORDER = [
+  "revenue",
+  "gross_profit",
+  "operating_income",
+  "net_income",
+  "total_assets",
+  "total_liabilities",
+  "equity",
+  "cash",
+  "total_debt",
+];
+
+const CURRENCY_SYMBOL: Record<string, string> = { IDR: "Rp", USD: "US$" };
+
+function splitDecimal(value: string): { negative: boolean; digits: string; fraction: string } {
+  const negative = value.startsWith("-");
+  const [int, fraction = ""] = value.replace(/^-/, "").split(".");
+  return { negative, digits: int.replace(/^0+(?=\d)/, ""), fraction: fraction.replace(/0+$/, "") };
+}
+
+function currencyPrefix(currency: string | null): string {
+  return currency ? (CURRENCY_SYMBOL[currency] ?? `${currency} `) : "";
+}
+
+/** Compact display (Rp12.4T), rounded half-up to two decimals with integer math only. */
+export function formatAmount(value: string, currency: string | null): string {
+  const { negative, digits, fraction } = splitDecimal(value);
+  const units: [number, string][] = [
+    [12, "T"],
+    [9, "B"],
+    [6, "M"],
+  ];
+  const unit = units.find(([exp]) => digits.length > exp);
+  let body: string;
+  if (unit) {
+    const [exp, suffix] = unit;
+    const divisor = 10n ** BigInt(exp - 2);
+    const hundredths = (BigInt(digits) + divisor / 2n) / divisor;
+    const whole = hundredths / 100n;
+    const cents = (hundredths % 100n).toString().padStart(2, "0").replace(/0+$/, "");
+    body = `${whole}${cents ? `.${cents}` : ""}${suffix}`;
+  } else {
+    body = `${digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${fraction ? `.${fraction}` : ""}`;
+  }
+  return `${negative ? "−" : ""}${currencyPrefix(currency)}${body}`;
+}
+
+/** Full value with grouping, e.g. Rp12,400,000,000,000 — what the compact form stands for. */
+export function formatExact(value: string, currency: string | null): string {
+  const { negative, digits, fraction } = splitDecimal(value);
+  const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${negative ? "−" : ""}${currencyPrefix(currency)}${grouped}${fraction ? `.${fraction}` : ""}`;
+}

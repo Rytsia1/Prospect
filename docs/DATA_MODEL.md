@@ -140,30 +140,41 @@ Metric definitions.
 |---|---|---|
 | id | UUID | PK |
 | document_id | UUID | FK |
-| metric_id | UUID | FK |
-| value_numeric | NUMERIC | decimal-safe |
-| currency | CHAR(3) | nullable |
-| scale | VARCHAR | units/thousands/millions/billions |
+| metric_id | UUID | FK financial_metrics |
+| evidence_id | UUID | required; composite FK (evidence_id, document_id) → evidence |
+| value_numeric | NUMERIC | full value in currency units (scale applied), sign preserved |
+| currency | CHAR(3) | nullable; required when status = accepted (never guessed) |
+| scale | VARCHAR | units/thousands/millions/billions/trillions as printed in the source |
+| original_text | VARCHAR | the value exactly as printed, e.g. "(1,250)" |
+| original_unit | TEXT | the unit statement the scale came from, e.g. "(expressed in millions of Rupiah)" |
+| period_type | ENUM | annual / quarter / interim / instant (balance-sheet date); never interchangeable |
 | period_start | DATE | nullable |
-| period_end | DATE | required |
-| period_label | VARCHAR | e.g. FY2025 |
-| confidence | NUMERIC(5,4) | 0–1 |
+| period_end | DATE | nullable: NULL when the document states only the year (not guessed) |
+| period_label | VARCHAR | e.g. FY2025, Q4 2025, 2025-12-31 |
+| fiscal_year | INTEGER | nullable |
+| confidence | NUMERIC(5,4) | 0–1, deterministic score from how the value was found |
 | extraction_method | VARCHAR | parser/llm/ocr/manual |
+| status | ENUM | accepted (a FACT) / needs_review (kept for audit, never shown as a fact) |
+| review_reasons | JSONB | why a value needs review, e.g. "currency not stated" |
 | created_at | TIMESTAMP | required |
+
+Unique: one accepted fact per (document, metric, period_type, period_label).
 
 ### evidence
 
-| Column | Type |
-|---|---|
-| id | UUID |
-| document_id | UUID |
-| page_id | UUID |
-| section_id | UUID nullable |
-| evidence_type | ENUM |
-| content | TEXT |
-| bbox_json | JSONB nullable |
-| locator | JSONB |
-| created_at | TIMESTAMP |
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| document_id | UUID | FK |
+| page_id | UUID | composite FK (page_id, document_id, page_number) → document_pages |
+| page_number | INTEGER | |
+| section_id | UUID | composite FK (section_id, document_id) → document_sections |
+| chunk_id | UUID | composite FK (chunk_id, page_id) → document_chunks |
+| evidence_type | ENUM | table_row / text_line |
+| content | TEXT | verbatim source row, a substring of the page text |
+| bbox_json | JSONB nullable | [x0, y0, x1, y1] of the source block |
+| locator | JSONB | block_index, row_index, column_index, header, unit |
+| created_at | TIMESTAMP | |
 
 `locator` may contain table/cell coordinates when available.
 

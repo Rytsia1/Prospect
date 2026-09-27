@@ -98,6 +98,13 @@ layer) fail immediately with a user-visible reason. Other errors retry up to 3 t
 backoff. A job whose worker died is reclaimed after a 15-minute lease, so documents never stay
 in PROCESSING. Reprocessing replaces a document's pages/sections/chunks in one transaction.
 
+Financial facts (revenue, gross profit, operating income, net income, total assets,
+total liabilities, equity, cash, total debt) are extracted deterministically in the same
+transaction, without an LLM (`app/extraction.py`). Each fact stores its value as NUMERIC, its
+period type, currency and scale, the value as printed, and evidence pointing to the exact row,
+page, section and chunk. Values whose currency, scale or period is not stated, or that conflict
+across pages, are kept as `needs_review` and are not shown as facts.
+
 PDF parsing uses PyMuPDF, which is licensed AGPL-3.0 (commercial licenses are available from
 Artifex). Running it in a public web service carries AGPL obligations; review before launch.
 

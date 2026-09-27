@@ -21,8 +21,8 @@ def pages(tmp_path_factory):
 
 
 def test_pages_are_numbered_physically_with_printed_labels_kept(pages):
-    assert [p.number for p in pages] == [1, 2, 3, 4]
-    assert [p.metadata["label"] for p in pages] == ["i", "86", "87", "88"]
+    assert [p.number for p in pages] == [1, 2, 3, 4, 5]
+    assert [p.metadata["label"] for p in pages] == ["i", "86", "87", "88", "89"]
     assert pages[0].metadata["width"] == 595.0
 
 
@@ -35,8 +35,8 @@ def test_text_is_extracted_per_page(pages):
 
 def test_table_is_one_structured_block_in_reading_order(pages):
     kinds = [b.kind for b in pages[1].blocks]
-    assert kinds == ["text", "table", "text"]
-    table = pages[1].blocks[1]
+    assert kinds == ["text", "text", "table", "text"]
+    table = pages[1].blocks[2]
     assert "Revenue | 12,400 | 10,500" in table.text
     assert "Net income | 1,740 | 1,400" in table.text
     x0, y0, x1, y1 = table.bbox
@@ -63,6 +63,7 @@ def test_sections_use_verbatim_headings_and_generic_fallback(pages):
         ("Management Discussion and Analysis", 1, 1),
         ("Consolidated Statement of Profit or Loss", 2, 2),
         ("1. General Information", 3, 3),
+        ("Consolidated Statement of Financial Position", 5, 5),
     ]
     assert len(assignment) == sum(len(p.blocks) for p in pages)
 
@@ -87,7 +88,7 @@ def test_headings_stay_with_their_text_and_tables_are_never_split(pages):
     chunks = chunk_pages(pages, detect_sections(pages)[1])
     mdna = [c for c in chunks if c.content.startswith("Management Discussion and Analysis")]
     assert mdna and len(mdna[0].content) > len("Management Discussion and Analysis")
-    table_text = pages[1].blocks[1].text
+    table_text = pages[1].blocks[2].text
     assert sum(table_text in c.content for c in chunks) == 1
 
 

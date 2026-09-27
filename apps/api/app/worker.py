@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import SessionLocal
+from app.extraction import extract_facts
 from app.logs import configure_logging
 from app.models import (
     Document,
@@ -30,8 +31,14 @@ from app.models import (
     DocumentPage,
     DocumentSection,
     DocumentStatus,
+    Evidence,
+    EvidenceType,
+    FactStatus,
+    FinancialFact,
+    FinancialMetric,
     JobStatus,
     PageExtractionStatus,
+    PeriodType,
     ProcessingJob,
 )
 from app.processing import ParsedPage, ProcessingError, chunk_pages, detect_sections, parse_pdf
@@ -121,17 +128,20 @@ def process_next(storage: ObjectStorage) -> bool:
 
 
 def _store(job_id: uuid.UUID, document_id: uuid.UUID, pages: list[ParsedPage]) -> None:
-    """Replace the document's pages/sections/chunks and mark it READY, in one transaction.
+    """Replace the document's pages/sections/chunks/facts and mark it READY, in one transaction.
 
     Delete-then-insert makes a retried job idempotent: no duplicates, no partial results.
     """
     sections, assignment = detect_sections(pages)
     chunks = chunk_pages(pages, assignment)
+    facts, rejections = extract_facts(pages, sections, assignment, chunks)
     page_ids = {p.number: uuid.uuid4() for p in pages}
     section_ids = {s.ordinal: uuid.uuid4() for s in sections}
+    chunk_ids = {(c.page_number, c.chunk_index): uuid.uuid4() for c in chunks}
+    blocks = {(p.number, b.index): b for p in pages for b in p.blocks}
 
     with SessionLocal() as session, session.begin():
-        for model in (DocumentChunk, DocumentSection, DocumentPage):
+        for model in (FinancialFact, Evidence, DocumentChunk, DocumentSection, DocumentPage):
             session.execute(delete(model).where(model.document_id == document_id))
         session.add_all(
             DocumentPage(
@@ -159,6 +169,7 @@ def _store(job_id: uuid.UUID, document_id: uuid.UUID, pages: list[ParsedPage]) -
         session.flush()  # chunks reference pages and sections
         session.add_all(
             DocumentChunk(
+                id=chunk_ids[(c.page_number, c.chunk_index)],
                 document_id=document_id,
                 page_id=page_ids[c.page_number],
                 page_number=c.page_number,
@@ -169,6 +180,63 @@ def _store(job_id: uuid.UUID, document_id: uuid.UUID, pages: list[ParsedPage]) -
                 content=c.content,
             )
             for c in chunks
+        )
+        session.flush()  # evidence references chunks
+
+        metric_ids = dict(session.execute(select(FinancialMetric.key, FinancialMetric.id)).all())
+        for fact in facts:
+            c = fact.candidate
+            evidence = Evidence(
+                id=uuid.uuid4(),
+                document_id=document_id,
+                page_id=page_ids[c.page_number],
+                page_number=c.page_number,
+                section_id=section_ids[fact.section_ordinal],
+                chunk_id=chunk_ids[(c.page_number, fact.chunk_index)],
+                evidence_type=EvidenceType(c.source_kind),
+                content=c.source_text,
+                bbox_json=list(blocks[(c.page_number, c.block_index)].bbox),
+                locator={
+                    "block_index": c.block_index,
+                    "row_index": c.row_index,
+                    "column_index": c.column_index,
+                    "header": c.header_text,
+                    "unit": c.unit_text,
+                },
+            )
+            session.add(evidence)
+            session.flush()  # the fact references its evidence
+            session.add(
+                FinancialFact(
+                    document_id=document_id,
+                    metric_id=metric_ids[c.metric],
+                    evidence_id=evidence.id,
+                    value_numeric=c.amount.value,
+                    currency=c.amount.currency,
+                    scale=c.amount.scale,
+                    original_text=c.amount.original_text[:100],
+                    original_unit=c.unit_text,
+                    period_type=PeriodType(c.period.type),
+                    period_end=c.period.end,
+                    period_label=c.period.label,
+                    fiscal_year=c.period.fiscal_year,
+                    confidence=fact.confidence,
+                    extraction_method="parser",
+                    status=FactStatus(fact.status),
+                    review_reasons=fact.review_reasons,
+                )
+            )
+        log.info(
+            "financial extraction",
+            extra={
+                "fields": {
+                    "document_id": str(document_id),
+                    "accepted": sum(f.status == "accepted" for f in facts),
+                    "needs_review": sum(f.status == "needs_review" for f in facts),
+                    "rejected": len(rejections),
+                    "rejections": [f"p{r.page_number}: {r.reason}" for r in rejections[:20]],
+                }
+            },
         )
         document = session.get_one(Document, document_id)
         document.status = DocumentStatus.READY

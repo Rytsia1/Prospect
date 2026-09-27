@@ -102,7 +102,7 @@ def test_worker_turns_upload_into_pages_sections_chunks(storage, report_bytes):
     assert doc.status == DocumentStatus.READY and doc.processing_error is None
     assert job.status == JobStatus.SUCCEEDED and job.attempts == 1
     pages, sections, chunks = counts(doc_id)
-    assert (pages, sections) == (4, 4) and chunks > 0
+    assert (pages, sections) == (5, 5) and chunks > 0
 
     with SessionLocal() as s:
         numbers = s.scalars(
@@ -110,7 +110,7 @@ def test_worker_turns_upload_into_pages_sections_chunks(storage, report_bytes):
             .where(DocumentPage.document_id == doc_id)
             .order_by(DocumentPage.page_number)
         ).all()
-        assert numbers == [1, 2, 3, 4]
+        assert numbers == [1, 2, 3, 4, 5]
         # Every chunk carries its document and page number, consistent with its page row.
         rows = s.execute(
             select(DocumentChunk.document_id, DocumentChunk.page_number, DocumentPage.page_number)
@@ -124,7 +124,7 @@ def test_worker_turns_upload_into_pages_sections_chunks(storage, report_bytes):
             )
         ).one()
         assert page2.page_metadata["label"] == "86"
-        assert [b["kind"] for b in page2.blocks] == ["text", "table", "text"]
+        assert [b["kind"] for b in page2.blocks] == ["text", "text", "table", "text"]
 
     assert process_next(storage) is False  # nothing left to do
 
@@ -235,6 +235,7 @@ def test_viewer_api_serves_pages_and_sections_to_owner_only(storage, report_byte
         (2, "86"),
         (3, "87"),
         (4, "88"),
+        (5, "89"),
     ]
     assert pages[3]["extraction_status"] == "partial" and pages[3]["char_count"] == 0
 
@@ -252,3 +253,81 @@ def test_viewer_api_serves_pages_and_sections_to_owner_only(storage, report_byte
         response = client.get(f"{base}{path}", headers=intruder)
         assert response.status_code == 404
         assert response.json()["error"]["message"] == "Document not found"
+
+
+def test_worker_stores_facts_linked_to_page_section_and_chunk(storage, report_bytes):
+    from decimal import Decimal
+
+    from app.models import Evidence, FactStatus, FinancialFact, FinancialMetric
+
+    doc_id = uploaded_document(storage, report_bytes)
+    process_next(storage)
+    with SessionLocal() as s:
+        rows = s.execute(
+            select(FinancialFact, FinancialMetric.key, Evidence, DocumentChunk, DocumentPage)
+            .join(FinancialMetric, FinancialMetric.id == FinancialFact.metric_id)
+            .join(Evidence, Evidence.id == FinancialFact.evidence_id)
+            .join(DocumentChunk, DocumentChunk.id == Evidence.chunk_id)
+            .join(DocumentPage, DocumentPage.id == Evidence.page_id)
+            .where(FinancialFact.document_id == doc_id)
+        ).all()
+    assert len(rows) == 18
+    assert {key for _, key, *_ in rows} == {
+        "revenue",
+        "gross_profit",
+        "operating_income",
+        "net_income",
+        "total_assets",
+        "total_liabilities",
+        "equity",
+        "cash",
+        "total_debt",
+    }
+    for fact, _key, evidence, chunk, page in rows:
+        assert fact.status == FactStatus.ACCEPTED and fact.currency == "IDR"
+        assert isinstance(fact.value_numeric, Decimal)
+        # Why is this value believed? The row is on the page, inside the chunk, in the section.
+        assert evidence.content in page.text and evidence.content in chunk.content
+        assert chunk.page_number == evidence.page_number == page.page_number
+        assert chunk.section_id == evidence.section_id
+    revenue = next(f for f, key, *_ in rows if key == "revenue" and f.fiscal_year == 2025)
+    assert revenue.value_numeric == Decimal("12400000000000")
+    assert (revenue.original_text, revenue.scale) == ("12,400", "billions")
+
+
+def test_reprocessing_does_not_duplicate_facts(storage, report_bytes):
+    from app.models import Evidence, FinancialFact
+
+    doc_id = uploaded_document(storage, report_bytes)
+    process_next(storage)
+    age_job(doc_id, status=JobStatus.QUEUED, updated_at=datetime.now(UTC) - timedelta(hours=1))
+    process_next(storage)
+    with SessionLocal() as s:
+        for model in (FinancialFact, Evidence):
+            assert s.scalar(select(func.count()).where(model.document_id == doc_id)) == 18
+
+
+def test_metrics_api_returns_facts_with_evidence_to_owner_only(storage, report_bytes):
+    owner, owner_id = session_headers()
+    intruder, _ = session_headers()
+    doc_id = uploaded_document(storage, report_bytes, user_id=owner_id)
+    process_next(storage)
+
+    response = client.get(f"/api/v1/documents/{doc_id}/metrics", headers=owner)
+    items = response.json()["items"]
+    assert len(items) == 18
+    revenue = next(i for i in items if i["metric"] == "revenue" and i["period_label"] == "FY2025")
+    assert revenue["value"] == "12400000000000"  # a decimal string, never a JSON float
+    assert (revenue["currency"], revenue["status"], revenue["period_type"]) == (
+        "IDR",
+        "accepted",
+        "annual",
+    )
+    assert revenue["evidence"]["page_number"] == 2
+    assert revenue["evidence"]["page_label"] == "86"
+    assert revenue["evidence"]["section_title"] == "Consolidated Statement of Profit or Loss"
+    assert revenue["evidence"]["content"] == "Revenue | 12,400 | 10,500"
+    assert revenue["evidence"]["unit"] == "(Rp billion)"
+
+    denied = client.get(f"/api/v1/documents/{doc_id}/metrics", headers=intruder)
+    assert denied.status_code == 404

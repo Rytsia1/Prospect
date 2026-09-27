@@ -249,12 +249,25 @@ paths:
 
   /documents/{documentId}/metrics:
     get:
-      summary: Get extracted financial facts
+      summary: Get extracted financial facts with their evidence
+      description: >
+        Items with status needs_review are kept for audit and must not be presented as facts.
+        Monetary values are decimal strings in full currency units, never JSON numbers.
       parameters:
         - $ref: "#/components/parameters/DocumentId"
       responses:
         "200":
           description: Financial facts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FinancialFact"
 
   /documents/{documentId}/calculations:
     get:
@@ -298,6 +311,90 @@ components:
         format: uuid
 
   schemas:
+    FinancialFact:
+      type: object
+      required: [id, metric, metric_name, value, scale, original_text, period_type, period_label, confidence, status, review_reasons, extraction_method, evidence]
+      properties:
+        id:
+          type: string
+          format: uuid
+        metric:
+          type: string
+          enum: [revenue, gross_profit, operating_income, net_income, total_assets, total_liabilities, equity, cash, total_debt]
+        metric_name:
+          type: string
+        value:
+          type: string
+          description: Decimal string, full value in currency units, sign preserved (e.g. "-1250000000")
+        currency:
+          type: string
+          nullable: true
+          description: ISO 4217; null only on needs_review items (never guessed)
+        scale:
+          type: string
+          enum: [units, thousands, millions, billions, trillions]
+          description: The scale the source printed the value in
+        original_text:
+          type: string
+          description: The value exactly as printed, e.g. "(1,250)"
+        period_type:
+          type: string
+          enum: [annual, quarter, interim, instant]
+        period_label:
+          type: string
+          description: FY2025, Q4 2025, 2025-12-31 (instant), 9M ended 2025-09-30
+        period_end:
+          type: string
+          format: date
+          nullable: true
+          description: Null when the document states only the year
+        fiscal_year:
+          type: integer
+          nullable: true
+        confidence:
+          type: string
+          description: Deterministic 0-1 score from how the value was found; not a probability
+        status:
+          type: string
+          enum: [accepted, needs_review]
+        review_reasons:
+          type: array
+          items:
+            type: string
+        extraction_method:
+          type: string
+          enum: [parser]
+        evidence:
+          type: object
+          required: [id, page_number, chunk_id, kind, content]
+          properties:
+            id:
+              type: string
+              format: uuid
+            page_number:
+              type: integer
+            page_label:
+              type: string
+              nullable: true
+            section_title:
+              type: string
+              nullable: true
+            chunk_id:
+              type: string
+              format: uuid
+            kind:
+              type: string
+              enum: [table_row, text_line]
+            content:
+              type: string
+              description: Verbatim source row; a substring of the page text
+            header:
+              type: string
+              nullable: true
+            unit:
+              type: string
+              nullable: true
+
     Error:
       type: object
       required: [error]
