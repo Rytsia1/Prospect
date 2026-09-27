@@ -18,6 +18,7 @@ export type ProspectDocument = {
   document_type: DocumentType;
   fiscal_year: number | null;
   company_name: string | null;
+  company_id?: string | null;
   mime_type: string;
   size_bytes: number;
   status: DocumentStatus;
@@ -106,7 +107,7 @@ export function printedLabel(page: { page_number: number; label: string | null }
   return page.label && page.label !== String(page.page_number) ? page.label : null;
 }
 
-export type FactStatus = "accepted" | "needs_review";
+export type FactStatus = "accepted" | "needs_review" | "corrected" | "rejected";
 
 export type FinancialFact = {
   id: string;

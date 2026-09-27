@@ -168,7 +168,7 @@ def load_financials(
                 f.fiscal_year,
             ),
             f.document_id,
-            "accepted" if f.status.value == "accepted" else "needs_review",
+            "accepted" if f.status.value in ("accepted", "corrected") else "needs_review",
             f.scale,
         )
         for f in facts

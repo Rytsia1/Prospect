@@ -11,7 +11,18 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException
 
-from app import auth, documents, financials
+from app import (
+    audit,
+    auth,
+    companies,
+    diff,
+    documents,
+    financials,
+    quality,
+    reviews,
+    scenarios,
+    watchlist,
+)
 from app.config import get_settings
 from app.logs import configure_logging
 
@@ -26,6 +37,13 @@ app = FastAPI(title="Prospect API", version="0.1.0")
 app.include_router(auth.router, prefix=API_V1_PREFIX)
 app.include_router(documents.router, prefix=API_V1_PREFIX)
 app.include_router(financials.router, prefix=API_V1_PREFIX)
+app.include_router(diff.router, prefix=API_V1_PREFIX)
+app.include_router(reviews.router, prefix=API_V1_PREFIX)
+app.include_router(quality.router, prefix=API_V1_PREFIX)
+app.include_router(scenarios.router, prefix=API_V1_PREFIX)
+app.include_router(companies.router, prefix=API_V1_PREFIX)
+app.include_router(watchlist.router, prefix=API_V1_PREFIX)
+app.include_router(audit.router, prefix=API_V1_PREFIX)
 
 
 class ErrorBody(BaseModel):

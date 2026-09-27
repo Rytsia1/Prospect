@@ -252,7 +252,7 @@ def build(
     resolved: list[FactInput] = []
     conflicted: list[FactInput] = []
     for (metric, period), group in sorted(groups.items()):
-        accepted = [s for s in group if s.status == "accepted"]
+        accepted = [s for s in group if s.status in ("accepted", "corrected")]
         if not accepted:
             ids = [s.fact.id for s in group]
             cells[(metric, period)] = Cell(metric, period, "needs_review", ids, None)

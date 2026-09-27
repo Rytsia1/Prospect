@@ -438,6 +438,569 @@ paths:
               schema:
                 $ref: "#/components/schemas/ResearchAnswer"
 
+  /documents/diff:
+    post:
+      summary: Compare two documents deterministically
+      description: Returns metadata diff, structured financial facts diff, section diff, and unified text diff
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentDiffRequest"
+      responses:
+        "200":
+          description: Document comparison result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentDiffResponse"
+
+  /documents/{documentId}/diff:
+    get:
+      summary: Compare a document with a target document
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - name: target_document_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Document comparison result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentDiffResponse"
+
+  /financial-facts/review:
+    get:
+      summary: List financial facts for extraction review
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [accepted, needs_review, corrected, rejected]
+        - name: confidence
+          in: query
+          schema:
+            type: string
+        - name: metric
+          in: query
+          schema:
+            type: string
+        - name: period_label
+          in: query
+          schema:
+            type: string
+        - name: document_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Paginated review items
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FactReviewItem"
+                  total:
+                    type: integer
+
+  /financial-facts/{factId}/accept:
+    post:
+      summary: Accept an extracted financial fact
+      parameters:
+        - name: factId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Accepted financial fact
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FactReviewItem"
+
+  /financial-facts/{factId}/correct:
+    post:
+      summary: Correct a financial fact while preserving extraction history
+      parameters:
+        - name: factId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FactCorrectionRequest"
+      responses:
+        "200":
+          description: Corrected financial fact
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FactReviewItem"
+
+  /financial-facts/{factId}/reject:
+    post:
+      summary: Reject an extracted financial fact
+      parameters:
+        - name: factId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FactRejectionRequest"
+      responses:
+        "200":
+          description: Rejected financial fact
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FactReviewItem"
+
+  /financial-facts/{factId}/history:
+    get:
+      summary: Get revision history of a financial fact
+      parameters:
+        - name: factId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of historical review events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FactHistoryItem"
+
+  /data-quality:
+    get:
+      summary: Run data quality rules and list detected anomalies
+      parameters:
+        - name: document_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: company_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, acknowledged, resolved, ignored]
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [info, warning, error]
+        - name: rule_code
+          in: query
+          schema:
+            type: string
+        - name: run_fresh
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        "200":
+          description: Data quality issues and summary counts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, summary]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DataQualityIssueOut"
+                  summary:
+                    $ref: "#/components/schemas/DataQualitySummary"
+
+  /data-quality/{issueId}:
+    patch:
+      summary: Update data quality anomaly status
+      parameters:
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DataQualityIssueUpdate"
+      responses:
+        "200":
+          description: Updated issue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataQualityIssueOut"
+
+  /scenarios/calculate:
+    post:
+      summary: Compute deterministic scenario preview without persisting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScenarioCalculationRequest"
+      responses:
+        "200":
+          description: Calculated scenario outputs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScenarioCalculationResult"
+
+  /scenarios:
+    get:
+      summary: List user scenarios
+      parameters:
+        - name: company_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: document_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of saved scenarios
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScenarioOut"
+    post:
+      summary: Create and save a user scenario
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScenarioCreate"
+      responses:
+        "201":
+          description: Created scenario
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScenarioOut"
+
+  /scenarios/{scenarioId}:
+    get:
+      summary: Get a specific scenario
+      parameters:
+        - name: scenarioId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Scenario details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScenarioOut"
+    patch:
+      summary: Update an existing scenario
+      parameters:
+        - name: scenarioId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScenarioUpdate"
+      responses:
+        "200":
+          description: Updated scenario
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScenarioOut"
+    delete:
+      summary: Delete a scenario
+      parameters:
+        - name: scenarioId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Deleted successfully
+
+  /companies:
+    get:
+      summary: List companies in user workspace
+      responses:
+        "200":
+          description: List of companies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CompanyOut"
+    post:
+      summary: Create a new company
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyCreate"
+      responses:
+        "201":
+          description: Created company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyOut"
+
+  /companies/{companyId}:
+    get:
+      summary: Get company details, documents, and financials
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Company details with associated documents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyOut"
+    patch:
+      summary: Update company metadata
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyUpdate"
+      responses:
+        "200":
+          description: Updated company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyOut"
+    delete:
+      summary: Delete company (detaches associated documents)
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Company deleted
+
+  /companies/{companyId}/documents:
+    post:
+      summary: Associate a document with a company
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyDocumentAttach"
+      responses:
+        "200":
+          description: Updated company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyOut"
+
+  /companies/{companyId}/documents/{documentId}:
+    delete:
+      summary: Detach a document from a company
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "204":
+          description: Document detached
+
+  /watchlist:
+    get:
+      summary: List user watchlist with factual metrics
+      responses:
+        "200":
+          description: Watchlist entries with factual revenue, net income, YoY growth
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WatchlistEntryOut"
+    post:
+      summary: Add company to watchlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WatchlistCreate"
+      responses:
+        "201":
+          description: Watchlist entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchlistEntryOut"
+
+  /watchlist/{companyId}:
+    delete:
+      summary: Remove company from watchlist
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Removed from watchlist
+
+  /audit:
+    get:
+      summary: List append-only audit trail events
+      parameters:
+        - name: entity_type
+          in: query
+          schema:
+            type: string
+        - name: entity_id
+          in: query
+          schema:
+            type: string
+        - name: event_type
+          in: query
+          schema:
+            type: string
+        - name: actor_id
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Paginated audit events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditEventOut"
+                  total:
+                    type: integer
+
 components:
   securitySchemes:
     sessionToken:
@@ -502,7 +1065,7 @@ components:
           description: Deterministic 0-1 score from how the value was found; not a probability
         status:
           type: string
-          enum: [accepted, needs_review]
+          enum: [accepted, needs_review, corrected, rejected]
         review_reasons:
           type: array
           items:
@@ -871,6 +1434,10 @@ components:
         company_name:
           type: string
           nullable: true
+        company_id:
+          type: string
+          format: uuid
+          nullable: true
         mime_type:
           type: string
         size_bytes:
@@ -932,3 +1499,505 @@ components:
           type: integer
         excerpt:
           type: string
+
+    DocumentDiffRequest:
+      type: object
+      required: [doc_a_id, doc_b_id]
+      properties:
+        doc_a_id:
+          type: string
+          format: uuid
+        doc_b_id:
+          type: string
+          format: uuid
+
+    DocumentDiffResponse:
+      type: object
+      required: [doc_a, doc_b, metadata_diff, financial_diff, section_diff, text_diff]
+      properties:
+        doc_a:
+          type: object
+        doc_b:
+          type: object
+        metadata_diff:
+          type: object
+        financial_diff:
+          type: array
+          items:
+            type: object
+        section_diff:
+          type: array
+          items:
+            type: object
+        text_diff:
+          type: array
+          items:
+            type: object
+
+    FactReviewItem:
+      type: object
+      required: [id, document_id, metric, metric_name, value, scale, original_text, period_type, period_label, confidence, status, review_reasons, extraction_method]
+      properties:
+        id:
+          type: string
+          format: uuid
+        document_id:
+          type: string
+          format: uuid
+        metric:
+          type: string
+        metric_name:
+          type: string
+        value:
+          type: string
+        currency:
+          type: string
+          nullable: true
+        scale:
+          type: string
+        original_text:
+          type: string
+        period_type:
+          type: string
+        period_label:
+          type: string
+        confidence:
+          type: string
+        status:
+          type: string
+        review_reasons:
+          type: array
+          items:
+            type: string
+        extraction_method:
+          type: string
+        evidence:
+          type: object
+          nullable: true
+
+    FactCorrectionRequest:
+      type: object
+      properties:
+        value:
+          type: string
+        currency:
+          type: string
+        scale:
+          type: string
+        period_label:
+          type: string
+        metric:
+          type: string
+        reason:
+          type: string
+
+    FactRejectionRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+
+    FactHistoryItem:
+      type: object
+      required: [id, fact_id, action, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        fact_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+        original_value:
+          type: string
+          nullable: true
+        new_value:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        actor_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    DataQualityIssueOut:
+      type: object
+      required: [id, rule_code, severity, status, description, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        document_id:
+          type: string
+          format: uuid
+          nullable: true
+        company_id:
+          type: string
+          format: uuid
+          nullable: true
+        rule_code:
+          type: string
+        severity:
+          type: string
+          enum: [info, warning, error]
+        status:
+          type: string
+          enum: [open, acknowledged, resolved, ignored]
+        metric:
+          type: string
+          nullable: true
+        period_label:
+          type: string
+          nullable: true
+        description:
+          type: string
+        evidence_id:
+          type: string
+          format: uuid
+          nullable: true
+        details:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DataQualityIssueUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [open, acknowledged, resolved, ignored]
+
+    DataQualitySummary:
+      type: object
+      required: [total, by_severity, by_status]
+      properties:
+        total:
+          type: integer
+        by_severity:
+          type: object
+        by_status:
+          type: object
+
+    ScenarioCalculationRequest:
+      type: object
+      required: [base_revenue]
+      properties:
+        base_revenue:
+          type: string
+        base_net_income:
+          type: string
+          nullable: true
+        revenue_growth_pct:
+          type: string
+          default: "0.0"
+        net_margin_pct:
+          type: string
+          nullable: true
+
+    ScenarioCalculationResult:
+      type: object
+      required: [base_revenue, revenue_growth_pct, scenario_revenue, revenue_change, disclaimer]
+      properties:
+        base_revenue:
+          type: string
+        base_net_income:
+          type: string
+          nullable: true
+        base_margin_pct:
+          type: string
+          nullable: true
+        revenue_growth_pct:
+          type: string
+        net_margin_pct:
+          type: string
+          nullable: true
+        scenario_revenue:
+          type: string
+        scenario_net_income:
+          type: string
+          nullable: true
+        revenue_change:
+          type: string
+        net_income_change:
+          type: string
+          nullable: true
+        disclaimer:
+          type: string
+
+    ScenarioCreate:
+      type: object
+      required: [name, base_period, base_revenue]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        company_id:
+          type: string
+          format: uuid
+          nullable: true
+        document_id:
+          type: string
+          format: uuid
+          nullable: true
+        base_period:
+          type: string
+        base_revenue:
+          type: string
+        base_net_income:
+          type: string
+          nullable: true
+        revenue_growth_pct:
+          type: string
+          default: "0.0"
+        net_margin_pct:
+          type: string
+          nullable: true
+        assumptions:
+          type: object
+
+    ScenarioUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        revenue_growth_pct:
+          type: string
+        net_margin_pct:
+          type: string
+          nullable: true
+        assumptions:
+          type: object
+
+    ScenarioOut:
+      type: object
+      required: [id, user_id, name, base_period, base_revenue, revenue_growth_pct, scenario_revenue, revenue_change, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        company_id:
+          type: string
+          format: uuid
+          nullable: true
+        document_id:
+          type: string
+          format: uuid
+          nullable: true
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        base_period:
+          type: string
+        base_revenue:
+          type: string
+        base_net_income:
+          type: string
+          nullable: true
+        base_margin_pct:
+          type: string
+          nullable: true
+        revenue_growth_pct:
+          type: string
+        net_margin_pct:
+          type: string
+          nullable: true
+        scenario_revenue:
+          type: string
+        scenario_net_income:
+          type: string
+          nullable: true
+        revenue_change:
+          type: string
+        net_income_change:
+          type: string
+          nullable: true
+        assumptions:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CompanyCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        ticker:
+          type: string
+          nullable: true
+        country:
+          type: string
+          nullable: true
+        currency:
+          type: string
+          default: "IDR"
+        description:
+          type: string
+          nullable: true
+
+    CompanyUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        ticker:
+          type: string
+          nullable: true
+        country:
+          type: string
+          nullable: true
+        currency:
+          type: string
+        description:
+          type: string
+          nullable: true
+
+    CompanyOut:
+      type: object
+      required: [id, user_id, name, currency, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        name:
+          type: string
+        ticker:
+          type: string
+          nullable: true
+        country:
+          type: string
+          nullable: true
+        currency:
+          type: string
+        description:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        documents:
+          type: array
+          items:
+            type: object
+        latest_period:
+          type: string
+          nullable: true
+        latest_revenue:
+          type: string
+          nullable: true
+        latest_net_income:
+          type: string
+          nullable: true
+
+    CompanyDocumentAttach:
+      type: object
+      required: [document_id]
+      properties:
+        document_id:
+          type: string
+          format: uuid
+
+    WatchlistCreate:
+      type: object
+      required: [company_id]
+      properties:
+        company_id:
+          type: string
+          format: uuid
+
+    WatchlistEntryOut:
+      type: object
+      required: [id, user_id, company_id, created_at, company_name, currency]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        company_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        company_name:
+          type: string
+        ticker:
+          type: string
+          nullable: true
+        currency:
+          type: string
+        latest_period:
+          type: string
+          nullable: true
+        latest_revenue:
+          type: string
+          nullable: true
+        latest_net_income:
+          type: string
+          nullable: true
+        revenue_yoy_pct:
+          type: string
+          nullable: true
+
+    AuditEventOut:
+      type: object
+      required: [id, event_type, entity_type, entity_id, timestamp]
+      properties:
+        id:
+          type: string
+          format: uuid
+        actor_id:
+          type: string
+          nullable: true
+        event_type:
+          type: string
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+        before_state:
+          type: object
+          nullable: true
+        after_state:
+          type: object
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        ip_address:
+          type: string
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time

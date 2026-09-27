@@ -21,6 +21,9 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy import (
+    text as sql_text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -54,6 +57,8 @@ class PageExtractionStatus(enum.StrEnum):
 class FactStatus(enum.StrEnum):
     ACCEPTED = "accepted"  # authoritative: may be shown as a FACT and used in calculations
     NEEDS_REVIEW = "needs_review"  # kept for audit; never presented as a fact
+    CORRECTED = "corrected"  # authoritative: manually corrected by a reviewer
+    REJECTED = "rejected"  # rejected by a reviewer; never presented as a fact
 
 
 class PeriodType(enum.StrEnum):
@@ -96,6 +101,24 @@ class User(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+class Company(Base):
+    __tablename__ = "companies"
+    __table_args__ = (
+        Index("ix_companies_user_id_created_at", "user_id", "created_at"),
+        UniqueConstraint("user_id", "name", name="uq_companies_user_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(200))
+    ticker: Mapped[str | None] = mapped_column(String(20))
+    country: Mapped[str | None] = mapped_column(String(50))
+    currency: Mapped[str | None] = mapped_column(String(3))
+    description: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
 class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (
@@ -106,6 +129,9 @@ class Document(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("companies.id", ondelete="SET NULL"), nullable=True
+    )
     filename: Mapped[str] = mapped_column(String(255))
     document_type: Mapped[DocumentType] = mapped_column(_enum(DocumentType, "document_type"))
     fiscal_year: Mapped[int | None] = mapped_column(Integer)
@@ -298,7 +324,8 @@ class FinancialFact(Base):
             "period_type",
             "period_label",
             unique=True,
-            postgresql_where="status = 'accepted'",
+            postgresql_where="status IN ('accepted', 'corrected')",
+            sqlite_where=sql_text("status IN ('accepted', 'corrected')"),
         ),
         ForeignKeyConstraint(
             ["evidence_id", "document_id"],
@@ -310,7 +337,8 @@ class FinancialFact(Base):
         CheckConstraint("confidence BETWEEN 0 AND 1", name="ck_financial_facts_confidence"),
         # Currency is never guessed: an unstated currency cannot be authoritative.
         CheckConstraint(
-            "status <> 'accepted' OR currency IS NOT NULL", name="ck_financial_facts_currency"
+            "status NOT IN ('accepted', 'corrected') OR currency IS NOT NULL",
+            name="ck_financial_facts_currency",
         ),
     )
 
@@ -407,3 +435,135 @@ class CalculationInput(Base):
     calculation_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
     financial_fact_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
     document_id: Mapped[uuid.UUID] = mapped_column()
+
+
+class ExtractionReview(Base):
+    """Preserves full history of manual fact reviews, corrections, and rejections."""
+
+    __tablename__ = "extraction_reviews"
+    __table_args__ = (
+        Index("ix_extraction_reviews_document_id_fact_id", "document_id", "fact_id"),
+        Index("ix_extraction_reviews_user_id", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
+    fact_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("financial_facts.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    action: Mapped[str] = mapped_column(String(20))  # accepted, corrected, rejected
+    original_value: Mapped[Decimal] = mapped_column(Numeric)
+    original_currency: Mapped[str | None] = mapped_column(String(3))
+    original_scale: Mapped[str] = mapped_column(String(16))
+    original_period_type: Mapped[str] = mapped_column(String(20))
+    original_period_label: Mapped[str] = mapped_column(String(40))
+    corrected_value: Mapped[Decimal | None] = mapped_column(Numeric)
+    corrected_currency: Mapped[str | None] = mapped_column(String(3))
+    corrected_scale: Mapped[str | None] = mapped_column(String(16))
+    corrected_period_type: Mapped[str | None] = mapped_column(String(20))
+    corrected_period_label: Mapped[str | None] = mapped_column(String(40))
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class DataQualityIssue(Base):
+    """Deterministic anomaly / consistency issue identified in extracted data."""
+
+    __tablename__ = "data_quality_issues"
+    __table_args__ = (
+        Index("ix_data_quality_issues_user_id_status", "user_id", "status"),
+        Index("ix_data_quality_issues_document_id", "document_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=True
+    )
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=True
+    )
+    rule_type: Mapped[str] = mapped_column(String(40))
+    severity: Mapped[str] = mapped_column(String(10))  # INFO, WARNING, ERROR
+    metric: Mapped[str | None] = mapped_column(String(64))
+    period: Mapped[str | None] = mapped_column(String(40))
+    description: Mapped[str] = mapped_column(Text)
+    related_fact_ids: Mapped[list] = mapped_column(JSONB, server_default="[]")
+    evidence_ids: Mapped[list] = mapped_column(JSONB, server_default="[]")
+    status: Mapped[str] = mapped_column(String(20), default="OPEN", server_default="OPEN")
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+class Scenario(Base):
+    """User-controlled deterministic financial calculation scenario based on reported facts."""
+
+    __tablename__ = "scenarios"
+    __table_args__ = (Index("ix_scenarios_user_id_created_at", "user_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=True
+    )
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(String(200))
+    base_period: Mapped[str] = mapped_column(String(40))
+    inputs: Mapped[dict] = mapped_column(JSONB, server_default="{}")
+    assumptions: Mapped[dict] = mapped_column(JSONB, server_default="{}")
+    calculated_outputs: Mapped[dict] = mapped_column(JSONB, server_default="{}")
+    base_facts: Mapped[list] = mapped_column(JSONB, server_default="[]")
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+class AuditEvent(Base):
+    """Append-only audit trail recording user and system actions."""
+
+    __tablename__ = "audit_events"
+    __table_args__ = (
+        Index("ix_audit_events_user_id_created_at", "user_id", "created_at"),
+        Index("ix_audit_events_entity", "entity_type", "entity_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    actor_email: Mapped[str | None] = mapped_column(String(320))
+    event_type: Mapped[str] = mapped_column(String(50))
+    entity_type: Mapped[str] = mapped_column(String(50))
+    entity_id: Mapped[str] = mapped_column(String(100))
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, server_default="{}")
+    before_value: Mapped[dict | None] = mapped_column(JSONB)
+    after_value: Mapped[dict | None] = mapped_column(JSONB)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class WatchlistEntry(Base):
+    """Bookmarked company for research organization."""
+
+    __tablename__ = "watchlist_entries"
+    __table_args__ = (
+        UniqueConstraint("user_id", "company_id", name="uq_watchlist_user_company"),
+        Index("ix_watchlist_entries_user_id", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = _created_at()
+
+
+class DocumentComparison(Base):
+    """Record of a comparison performed between two documents."""
+
+    __tablename__ = "document_comparisons"
+    __table_args__ = (Index("ix_document_comparisons_user_id", "user_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    document_a_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
+    document_b_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
+    summary: Mapped[dict] = mapped_column(JSONB, server_default="{}")
+    created_at: Mapped[datetime] = _created_at()

@@ -6,6 +6,13 @@ import { usePathname } from "next/navigation";
 const LINKS = [
   { href: "/", label: "Overview" },
   { href: "/documents", label: "Documents" },
+  { href: "/companies", label: "Companies" },
+  { href: "/watchlist", label: "Watchlist" },
+  { href: "/review", label: "Review" },
+  { href: "/data-quality", label: "Data Quality" },
+  { href: "/scenarios", label: "Scenarios" },
+  { href: "/diff", label: "Diff" },
+  { href: "/audit", label: "Audit" },
 ];
 
 export function Nav() {

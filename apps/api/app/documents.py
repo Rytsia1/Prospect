@@ -81,6 +81,7 @@ class DocumentOut(BaseModel):
     document_type: DocumentType
     fiscal_year: int | None
     company_name: str | None
+    company_id: uuid.UUID | None = None
     mime_type: str
     size_bytes: int
     status: DocumentStatus
