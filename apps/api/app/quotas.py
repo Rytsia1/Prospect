@@ -19,7 +19,9 @@ from app.models import Document, DocumentStatus, JobStatus, ProcessingJob, User
 
 
 def _lock_user(session: Session, user_id: uuid.UUID) -> None:
-    session.execute(select(User.id).where(User.id == user_id).with_for_update())
+    # FOR NO KEY UPDATE: serializes quota checks for this user, yet lets rows that reference
+    # the user (audit events, written on their own connection) be inserted meanwhile.
+    session.execute(select(User.id).where(User.id == user_id).with_for_update(key_share=True))
 
 
 def _exceeded(request: Request, quota: str, status: int, message: str) -> ApiError:

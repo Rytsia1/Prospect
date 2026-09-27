@@ -35,8 +35,14 @@ pythonpath = ["."]
 line-length = 100
 
 [tool.ruff.lint]
-# E/F: pyflakes + pycodestyle, I: import order, B: bugbear, UP: modern syntax.
-select = ["E", "F", "I", "B", "UP"]
+# E/F: pyflakes + pycodestyle, I: import order, B: bugbear, UP: modern syntax,
+# S: flake8-bandit security checks (shell/pickle/yaml/SQL strings/secrets) as the SAST step.
+select = ["E", "F", "I", "B", "UP", "S"]
+# S101: asserts only narrow types here, never guard security.
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S"]  # fixtures use fake secrets, subprocess and localhost binds on purpose
 
 [tool.mypy]
 files = ["app", "migrations"]

@@ -1,5 +1,6 @@
 """Upload flow on real PostgreSQL + in-process S3 (moto). Runs when TEST_DATABASE_URL is set."""
 
+import hashlib
 import os
 import uuid
 
@@ -8,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from app.auth import cookie_name
 from app.config import get_settings
 from app.db import SessionLocal
 from app.main import app
@@ -27,7 +29,7 @@ def _use_storage(storage):
 
 
 def new_user() -> dict[str, str]:
-    token = client.post("/api/v1/sessions").json()["token"]
+    token = client.post("/api/v1/sessions").cookies[cookie_name()]
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -36,6 +38,7 @@ def create(headers: dict[str, str], **overrides) -> httpx.Response:
         "filename": "Annual Report 2025.pdf",
         "content_type": "application/pdf",
         "size_bytes": len(PDF),
+        "sha256": hashlib.sha256(PDF).hexdigest(),
         **overrides,
     }
     return client.post("/api/v1/documents", json=body, headers=headers)

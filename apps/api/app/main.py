@@ -1,15 +1,19 @@
 import logging
+import re
 import time
 import uuid
 from collections.abc import Mapping
 from http import HTTPStatus
 
-from fastapi import FastAPI, Request
+from botocore.exceptions import BotoCoreError, ClientError
+from fastapi import Depends, FastAPI, Request
+from fastapi.dependencies.models import Dependant
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import OperationalError
 from starlette.exceptions import HTTPException
 
 from app import (
@@ -24,17 +28,47 @@ from app import (
     scenarios,
     watchlist,
 )
+from app.auth import CSRF_HEADER, SAFE_METHODS, request_origin
 from app.config import get_settings
-from app.logs import configure_logging
+from app.errors import ApiError
+from app.logs import configure_logging, security_event
 
 API_V1_PREFIX = "/api/v1"  # docs/API_SPEC.yaml `servers`; resource routers mount here.
+# Accepted client request ids; anything else is replaced, so ids are safe to log and echo.
+REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 settings = get_settings()
 configure_logging(settings.log_level)
 log = logging.getLogger("prospect.api")
+production = settings.environment == "production"
 
-app = FastAPI(title="Prospect API", version="0.1.0")
+
+def _query_names(dependant: Dependant) -> frozenset[str]:
+    names = {p.alias for p in dependant.query_params}
+    for sub in dependant.dependencies:
+        names |= _query_names(sub)
+    return frozenset(names)
+
+
+def reject_unknown_query(request: Request) -> None:
+    """A misspelled or unsupported filter is an error, never silently ignored."""
+    dependant = getattr(request.scope.get("route"), "dependant", None)
+    unknown = set(request.query_params) - _query_names(dependant) if dependant else set()
+    if unknown:
+        name = min(unknown)[:40]  # echoed in a JSON error only (nosniff, CSP none)
+        raise ApiError(400, "unknown_parameter", f"Unknown query parameter: {name}")
+
+
+# Hiding the docs only reduces attack surface; nothing relies on it.
+app = FastAPI(
+    title="Prospect API",
+    version="0.1.0",
+    docs_url=None if production else "/docs",
+    redoc_url=None if production else "/redoc",
+    openapi_url=None if production else "/openapi.json",
+    dependencies=[Depends(reject_unknown_query)],
+)
 app.include_router(auth.router, prefix=API_V1_PREFIX)
 app.include_router(documents.router, prefix=API_V1_PREFIX)
 app.include_router(financials.router, prefix=API_V1_PREFIX)
@@ -89,26 +123,58 @@ async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    details = jsonable_encoder(exc.errors())
-    return _error(request, 422, "validation_error", "Request validation failed", details)
+    # Where and why only: the rejected input itself is not echoed back.
+    details = [{"loc": e["loc"], "msg": e["msg"], "type": e["type"]} for e in exc.errors()]
+    return _error(
+        request, 422, "validation_error", "Request validation failed", jsonable_encoder(details)
+    )
+
+
+# Every API response is JSON (or an export download): never framed, cached, sniffed, or
+# given a referrer.
+SECURITY_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Cache-Control": "no-store",  # financial data must not sit in shared or browser caches
+}
+if production:  # production is HTTPS only (the platform terminates TLS)
+    SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
 
 @app.middleware("http")
 async def request_context(request: Request, call_next):
-    request.state.request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    sent_id = request.headers.get("X-Request-ID", "")
+    request.state.request_id = sent_id if REQUEST_ID.match(sent_id) else str(uuid.uuid4())
     start = time.perf_counter()
     fields = {
         "request_id": request.state.request_id,
         "method": request.method,
         "path": request.url.path,
     }
+    origin = request_origin(request)
     try:
-        response = await call_next(request)
+        if request.method not in SAFE_METHODS and origin and origin not in settings.origin_list:
+            # Sent by a page we do not serve: CSRF, including login CSRF on POST /sessions.
+            # Cookie requests without any Origin/Referer are refused in app/auth.py.
+            security_event("csrf_rejected", request, origin=origin[:100])
+            response = _error(request, 403, "csrf_failed", "The request could not be verified.")
+        else:
+            response = await call_next(request)
+    except (OperationalError, BotoCoreError, ClientError):
+        # Database or storage unreachable: temporary. Details stay in the logs.
+        log.exception("dependency unavailable", extra={"fields": fields})
+        response = _error(request, 503, "service_unavailable", "Service temporarily unavailable.")
     except Exception:
         # Answer here, inside CORS, so browsers can read the error. Details stay in the logs.
         log.exception("request failed", extra={"fields": fields})
         response = _error(request, 500, "internal_error", "Internal server error")
     response.headers["X-Request-ID"] = request.state.request_id
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
     fields |= {
         "status": response.status_code,
         "duration_ms": round((time.perf_counter() - start) * 1000, 1),
@@ -118,14 +184,18 @@ async def request_context(request: Request, call_next):
 
 
 # Added last so it is the outermost middleware: every response, errors included, gets CORS.
+# Exact configured origins (never reflected) and no credentials: browsers reach the API through
+# the web app's same-origin /api proxy, so the cookie never crosses origins. CORS only serves
+# Bearer clients on a trusted origin.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.origin_list,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", CSRF_HEADER, "X-Request-ID"],
     # Content-Disposition: export filenames. Retry-After: when a rate limit resets.
     expose_headers=["X-Request-ID", "Content-Disposition", "Retry-After"],
+    max_age=600,
 )
 
 

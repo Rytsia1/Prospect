@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: every job only reads the repository. No job uses repository secrets, so a pull
+# request (including from a fork) runs with nothing to exfiltrate and no write-capable token.
+# Actions are pinned to full commit SHAs (tag in the comment); update them deliberately.
+# No step interpolates github.event.* / head_ref values into a shell.
+permissions:
+  contents: read
+
 jobs:
   api:
     runs-on: ubuntu-latest
@@ -29,11 +36,13 @@ jobs:
       APP_SECRET: ci
       ENVIRONMENT: development
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - run: uv sync --python 3.12
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: uv sync --frozen --python 3.12
       - run: uv run ruff format --check .
-      - run: uv run ruff check .
+      - run: uv run ruff check . # includes flake8-bandit (S) security rules
       - run: uv run mypy
       - run: uv run alembic upgrade head
       - run: uv run alembic check
@@ -45,9 +54,13 @@ jobs:
     defaults:
       run:
         working-directory: apps/web
+    env:
+      API_ORIGIN: http://localhost:8000 # production builds refuse to start without it
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
@@ -57,3 +70,46 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # Known-vulnerability policy (docs/SECURITY.md §12): production/runtime dependencies fail the
+  # build; development-only dependencies are reported without failing it.
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - name: Python runtime dependencies (fail on any known vulnerability)
+        working-directory: apps/api
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt -o runtime.txt
+          uvx pip-audit==2.10.1 -r runtime.txt --disable-pip --progress-spinner off
+      - name: Python development dependencies (report only)
+        continue-on-error: true
+        working-directory: apps/api
+        run: |
+          uv export --frozen --only-dev --no-emit-project --format requirements-txt -o dev.txt
+          uvx pip-audit==2.10.1 -r dev.txt --disable-pip --progress-spinner off
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: JavaScript production dependencies (fail on high or critical)
+        working-directory: apps/web
+        run: npm audit --omit=dev --audit-level=high
+      - name: JavaScript development dependencies (report only)
+        continue-on-error: true
+        working-directory: apps/web
+        run: npm audit --audit-level=high
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # the whole history, not just the last commit
+          persist-credentials: false
+      # Built from source with the Go checksum database verifying the module; no third-party
+      # action and no token needed.
+      - run: go install github.com/zricethezav/gitleaks/v8@v8.30.1
+      - run: "$(go env GOPATH)/bin/gitleaks git . --redact --no-banner"

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sample_pdf import build_sample_report
 from sqlalchemy import func, select, update
 
+from app.auth import cookie_name
 from app.config import get_settings
 from app.db import SessionLocal
 from app.main import app
@@ -225,7 +226,7 @@ def test_repeatedly_crashing_job_is_failed_not_left_processing(storage, report_b
 
 
 def session_headers() -> tuple[dict[str, str], uuid.UUID]:
-    token = client.post("/api/v1/sessions").json()["token"]
+    token = client.post("/api/v1/sessions").cookies[cookie_name()]
     return {"Authorization": f"Bearer {token}"}, user_of(token)
 
 

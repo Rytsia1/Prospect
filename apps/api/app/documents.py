@@ -2,9 +2,13 @@
 
 Upload flow: POST /documents (signed PUT URL) → browser PUTs the PDF to private storage →
 POST /documents/{id}/complete verifies the stored bytes server-side and queues processing.
+DELETE /documents/{id} removes the file and everything derived from it.
 """
 
+import logging
+import re
 import secrets
+import unicodedata
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -21,7 +25,7 @@ from app.auth import CurrentUserId, limit_user
 from app.config import get_settings
 from app.db import get_session
 from app.errors import ApiError
-from app.logs import security_event
+from app.logs import audit_event, security_event
 from app.models import (
     Calculation,
     CalculationInput,
@@ -42,12 +46,13 @@ from app.models import (
 from app.models import (
     DocumentSection as SectionRow,
 )
-from app.storage import ObjectStorage, get_storage
+from app.storage import DOCUMENT_PREFIX, UPLOAD_PREFIX, ObjectStorage, get_storage, sha256_header
 
 PDF_MIME = "application/pdf"
 PDF_MAGIC = b"%PDF-"
 PDF_HEADER_WINDOW = 1024  # PDF readers accept the header anywhere in the first 1 KiB
 
+log = logging.getLogger("prospect.documents")
 router = APIRouter(prefix="/documents", tags=["documents"])
 DbSession = Annotated[Session, Depends(get_session)]
 Storage = Annotated[ObjectStorage, Depends(get_storage)]
@@ -59,17 +64,31 @@ def _company(name: str | None) -> str | None:
 
 
 CompanyName = Annotated[str | None, Field(max_length=200), AfterValidator(_company)]
+FILENAME_MAX = 255
+
+
+def _display_filename(name: str) -> str:
+    """The original name as display text only (never a path or key): NFKC-normalized, last path
+    component, no control/format characters (so no bidi overrides or NUL), whitespace collapsed,
+    at most 255 characters. React renders it escaped; CSV exports escape formula prefixes."""
+    name = re.split(r"[\\/]", unicodedata.normalize("NFKC", name))[-1]
+    name = "".join(c for c in name if unicodedata.category(c)[0] != "C")
+    return " ".join(name.split()).strip(" .")[:FILENAME_MAX] or "document.pdf"
+
+
+Filename = Annotated[str, Field(min_length=1, max_length=1000), AfterValidator(_display_filename)]
 
 
 class DocumentCreate(BaseModel):
-    filename: str = Field(min_length=1, max_length=255)
+    filename: Filename
     content_type: str
     size_bytes: int = Field(gt=0)
     document_type: DocumentType = DocumentType.ANNUAL_REPORT
     fiscal_year: int | None = Field(default=None, ge=1900, le=2200)
     company_name: CompanyName = None
-    # SHA-256 of the file (hex). The worker refuses to process bytes that do not match.
-    sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    # SHA-256 of the file (hex). Signed into the upload URL, so storage refuses other bytes; the
+    # stored checksum is compared on completion and the worker re-hashes before parsing.
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class DocumentUpdate(BaseModel):
@@ -89,6 +108,7 @@ class DocumentOut(BaseModel):
     size_bytes: int
     status: DocumentStatus
     processing_error: str | None
+    threat_scan: str | None = None  # clean | not_scanned; null until the worker scans it
     created_at: datetime
     updated_at: datetime
 
@@ -255,31 +275,44 @@ def create_document(
         size_bytes=body.size_bytes,
         sha256=body.sha256,
         # Random, owner-independent key; the bucket is private and only signed URLs reach it.
-        storage_key=f"documents/{secrets.token_urlsafe(24)}.pdf",
+        storage_key=f"{UPLOAD_PREFIX}{secrets.token_urlsafe(24)}.pdf",
     )
     session.add(document)
     session.commit()
+    audit_event("document_created", request, entity_id=document.id, size_bytes=body.size_bytes)
     return DocumentUpload(
         document=DocumentOut.model_validate(document),
         upload=SignedUpload(
-            # Signed for exactly size_bytes of application/pdf: storage rejects anything else.
+            # Signed for exactly these bytes (length, type, SHA-256) at exactly this key.
             url=storage.signed_upload_url(
-                document.storage_key, PDF_MIME, body.size_bytes, settings.signed_url_ttl_seconds
+                document.storage_key,
+                PDF_MIME,
+                body.size_bytes,
+                body.sha256,
+                settings.signed_url_ttl_seconds,
             ),
-            headers={"Content-Type": PDF_MIME},
+            headers={"Content-Type": PDF_MIME, "x-amz-checksum-sha256": sha256_header(body.sha256)},
             expires_at=_expires_at(),
         ),
     )
 
 
 def _reject_upload(
-    session: Session, storage: ObjectStorage, document: Document, problem: str
+    request: Request,
+    session: Session,
+    storage: ObjectStorage,
+    document: Document,
+    event: str,
+    problem: str,
+    **fields: object,
 ) -> ApiError:
+    security_event(event, request, document_id=str(document.id), **fields)
     storage.delete(document.storage_key)
     document.status = DocumentStatus.FAILED
     document.processing_error = problem
     document.object_deleted_at = datetime.now(UTC)
     session.commit()
+    audit_event("upload_rejected", request, entity_id=document.id, result="rejected", reason=event)
     return ApiError(422, "invalid_upload", problem)
 
 
@@ -299,26 +332,47 @@ def complete_upload(
     if stored is None:
         raise ApiError(409, "upload_not_found", "The file has not been uploaded yet")
 
-    # Never trust the client: check the stored bytes, not the declared size or type.
+    # Never trust the client: check the stored bytes, not the declared size, type or checksum.
+    # Content integrity (these are the bytes that were declared) comes first; whether they are a
+    # PDF is a separate question, answered here only plausibly and fully by the parser.
     if stored.size != document.size_bytes or stored.size > get_settings().max_upload_bytes:
-        security_event(
-            "upload_rejected_size",
-            request,
-            document_id=str(document.id),
-            declared_bytes=document.size_bytes,
-            stored_bytes=stored.size,
-        )
-        raise _reject_upload(session, storage, document, "Uploaded file size does not match.")
+        raise _reject_upload(
+            request, session, storage, document, "upload_rejected_size",
+            "Uploaded file size does not match.",
+            declared_bytes=document.size_bytes, stored_bytes=stored.size,
+        )  # fmt: skip
+    if stored.sha256 and document.sha256 and stored.sha256 != document.sha256:
+        # Storage recorded a different SHA-256. When the provider records none, the worker
+        # hashes the bytes itself before anything reads them.
+        raise _reject_upload(
+            request, session, storage, document, "upload_checksum_mismatch",
+            "The uploaded file does not match its checksum.",
+        )  # fmt: skip
     if (stored.content_type or "").split(";")[0].strip() != PDF_MIME or PDF_MAGIC not in (
         storage.read_prefix(document.storage_key, PDF_HEADER_WINDOW)
     ):
-        security_event("upload_rejected_type", request, document_id=str(document.id))
-        raise _reject_upload(session, storage, document, "The file is not a valid PDF.")
+        raise _reject_upload(
+            request, session, storage, document, "upload_rejected_type",
+            "The file is not a valid PDF.",
+        )  # fmt: skip
 
     quotas.check_processing(request, session, user_id)  # before queueing any work
+    upload_key = document.storage_key
+    if upload_key.startswith(UPLOAD_PREFIX):
+        # Verified: move it out of uploads/, which storage lifecycle rules expire.
+        document.storage_key = DOCUMENT_PREFIX + upload_key.removeprefix(UPLOAD_PREFIX)
+        storage.copy(upload_key, document.storage_key)
     document.status = DocumentStatus.UPLOADED
     session.add(ProcessingJob(document_id=document.id))
     session.commit()
+    if upload_key != document.storage_key:
+        try:
+            storage.delete(upload_key)
+        except Exception:  # the uploads/ lifecycle rule removes it within a day
+            log.warning(
+                "upload copy not removed", extra={"fields": {"document_id": str(document.id)}}
+            )
+    audit_event("upload_completed", request, entity_id=document.id)
     return DocumentOut.model_validate(document)
 
 
@@ -346,18 +400,55 @@ def update_document(
     document_id: uuid.UUID, body: DocumentUpdate, user_id: CurrentUserId, session: DbSession
 ) -> DocumentOut:
     document = _owned_document(session, user_id, document_id, lock=True)
+    if body.company_name != document.company_name:
+        # A new label leaves the company workspace it was linked to: grouping is by id when
+        # linked (app/financials._scope_documents), so the two must never disagree.
+        document.company_id = None
     document.company_name = body.company_name
     session.commit()
     return DocumentOut.model_validate(document)
 
 
+def remove_document(session: Session, storage: ObjectStorage, document: Document) -> None:
+    """Delete the stored file, then the row; its pages, sections, chunks, evidence, facts,
+    calculations, jobs, reviews, quality issues, comparisons and document-based scenarios go with
+    it (ON DELETE CASCADE). Companies, watchlists and the audit trail are not document data and
+    stay.
+
+    Storage first: if that fails nothing has changed and the delete can simply be retried; if
+    the database step fails afterwards, the row still exists and retrying finishes the job
+    (deleting a missing object succeeds). Exports are never stored, so there is none to delete.
+    """
+    storage.delete(document.storage_key)
+    session.delete(document)
+    session.commit()
+
+
+@router.delete("/{document_id}", status_code=204)
+def delete_document(
+    request: Request,
+    document_id: uuid.UUID,
+    user_id: CurrentUserId,
+    session: DbSession,
+    storage: Storage,
+) -> None:
+    """Permanently delete the document, its file and everything extracted from it."""
+    remove_document(session, storage, _owned_document(session, user_id, document_id, lock=True))
+    audit_event("document_deleted", request, entity_id=document_id)
+
+
 @router.get("/{document_id}/download-url")
 def get_download_url(
-    document_id: uuid.UUID, user_id: CurrentUserId, session: DbSession, storage: Storage
+    request: Request,
+    document_id: uuid.UUID,
+    user_id: CurrentUserId,
+    session: DbSession,
+    storage: Storage,
 ) -> SignedDownload:
     document = _owned_document(session, user_id, document_id)
     if document.status in (DocumentStatus.UPLOADING, DocumentStatus.FAILED):
         raise ApiError(409, "file_unavailable", "The file is not available")
+    audit_event("document_accessed", request, entity_id=document.id, access="download")
     return SignedDownload(
         url=storage.signed_download_url(
             document.storage_key, get_settings().signed_url_ttl_seconds

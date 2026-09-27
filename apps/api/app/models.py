@@ -105,7 +105,10 @@ class UserSession(Base):
     """A signed bearer token's server-side record: expiry and revocation (app/auth.py)."""
 
     __tablename__ = "sessions"
-    __table_args__ = (Index("ix_sessions_user_id", "user_id"),)
+    __table_args__ = (
+        Index("ix_sessions_user_id", "user_id"),
+        Index("ix_sessions_expires_at", "expires_at"),  # cleanup sweep
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
@@ -146,6 +149,7 @@ class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (
         Index("ix_documents_user_id_created_at", "user_id", "created_at"),
+        Index("ix_documents_user_id_company_id", "user_id", "company_id"),  # company workspace
         CheckConstraint("fiscal_year BETWEEN 1900 AND 2200", name="ck_documents_fiscal_year"),
         CheckConstraint("size_bytes > 0", name="ck_documents_size_bytes"),
     )
@@ -173,6 +177,10 @@ class Document(Base):
     sha256: Mapped[str | None] = mapped_column(String(64))
     # Set once the stored object is deleted (failed or abandoned upload); frees storage quota.
     object_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Threat scan before parsing (app/scanning.py): "clean", or "not_scanned" when
+    # DOCUMENT_SCANNER=none. NULL until the worker reaches that stage. Never claims a scan that
+    # did not happen.
+    threat_scan: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 
@@ -446,6 +454,7 @@ class CalculationInput(Base):
     __tablename__ = "calculation_inputs"
     __table_args__ = (
         Index("ix_calculation_inputs_fact", "financial_fact_id", "document_id"),
+        Index("ix_calculation_inputs_document_id", "document_id"),
         ForeignKeyConstraint(
             ["calculation_id", "document_id"],
             ["calculations.id", "calculations.document_id"],
@@ -472,6 +481,7 @@ class ExtractionReview(Base):
     __table_args__ = (
         Index("ix_extraction_reviews_document_id_fact_id", "document_id", "fact_id"),
         Index("ix_extraction_reviews_user_id", "user_id"),
+        Index("ix_extraction_reviews_fact_id", "fact_id"),  # cascade from financial_facts
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -526,7 +536,10 @@ class Scenario(Base):
     """User-controlled deterministic financial calculation scenario based on reported facts."""
 
     __tablename__ = "scenarios"
-    __table_args__ = (Index("ix_scenarios_user_id_created_at", "user_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_scenarios_user_id_created_at", "user_id", "created_at"),
+        Index("ix_scenarios_document_id", "document_id"),  # cascade from documents
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
@@ -587,7 +600,12 @@ class DocumentComparison(Base):
     """Record of a comparison performed between two documents."""
 
     __tablename__ = "document_comparisons"
-    __table_args__ = (Index("ix_document_comparisons_user_id", "user_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_document_comparisons_user_id", "user_id", "created_at"),
+        # cascades from documents
+        Index("ix_document_comparisons_document_a_id", "document_a_id"),
+        Index("ix_document_comparisons_document_b_id", "document_b_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))

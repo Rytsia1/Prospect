@@ -92,7 +92,12 @@ export function DocumentDetail({ id, initial }: { id: string; initial: Workspace
     setOpening(true);
     try {
       const { url } = await api<{ url: string }>(`/documents/${id}/download-url`);
-      window.open(url, "_blank", "noopener");
+      // A signed storage URL: http(s) only (never javascript: or data:), opened without an
+      // opener or a referrer.
+      if (!["https:", "http:"].includes(new URL(url).protocol)) {
+        throw new ApiError(0, "invalid_url", "The file link is not valid.");
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
     } catch (e) {
       setError(e instanceof ApiError ? e : null);
     } finally {

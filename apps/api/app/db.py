@@ -10,7 +10,8 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(get_settings().database_url, pool_pre_ping=True)
+# hide_parameters: database errors in the logs never carry row values (evidence text, facts).
+engine = create_engine(get_settings().database_url, pool_pre_ping=True, hide_parameters=True)
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 

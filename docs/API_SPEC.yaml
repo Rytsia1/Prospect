@@ -8,48 +8,70 @@ servers:
   - url: /api/v1
 
 security:
+  - sessionCookie: []
   - sessionToken: []
 
 # Every non-2xx response body is an Error. A document owned by another user returns the
-# same 404 as a nonexistent one.
+# same 404 as a nonexistent one. Browsers authenticate with the session cookie and must send
+# X-CSRF-Token (plus a trusted Origin/Referer) on POST/PATCH/DELETE, else 403 csrf_failed.
+# Unknown query parameters are 400 unknown_parameter. Database or storage outages are 503.
+# See docs/SECURITY.md.
 
 paths:
   /sessions:
     post:
       summary: Start an anonymous single-user-mode session (replaced by real auth later)
       description: >
-        Token format v1.<session_id>.<issued_at>.<expires_at>.<hmac>. Rejected (401) when
-        malformed, badly signed, expired, revoked or unknown. Rate limited per client IP.
-        See docs/SECURITY.md.
+        Sets the session token (v1.<session_id>.<issued_at>.<expires_at>.<hmac>) as the
+        HttpOnly, Secure, SameSite=Strict cookie __Host-prospect_session; the body never
+        contains it. Rejected (401) when malformed, badly signed, expired, revoked or unknown.
+        Rate limited per client IP; refused (403) from an untrusted Origin.
       security: []
       responses:
         "201":
-          description: Signed, expiring session token for the Authorization header
+          description: Session started; Set-Cookie carries the token
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SessionToken"
+                $ref: "#/components/schemas/SessionInfo"
+        "403":
+          description: Untrusted Origin or Referer (login CSRF)
         "429":
           description: Rate limited; Retry-After gives the seconds to wait
 
   /sessions/refresh:
     post:
-      summary: Exchange a valid token for a fresh one (same user); revokes the old session
+      summary: Exchange a valid session for a fresh one (same user); revokes the old session
       responses:
         "200":
-          description: New session token
+          description: New session; Set-Cookie carries the new token
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SessionToken"
+                $ref: "#/components/schemas/SessionInfo"
         "401":
           description: Missing, malformed, expired, revoked or unknown session
         "429":
           description: Rate limited (Retry-After header)
 
   /sessions/current:
+    get:
+      summary: The current session's times and CSRF token (the cookie itself is unreadable)
+      responses:
+        "200":
+          description: Session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfo"
+        "401":
+          description: No valid session
     delete:
-      summary: Revoke the current session (sign out); the token is rejected from now on
+      summary: Revoke the current session (sign out) and clear the cookie
       responses:
         "204":
           description: Revoked
@@ -185,12 +207,21 @@ paths:
                 $ref: "#/components/schemas/Document"
 
     delete:
-      summary: Delete a document
+      summary: Delete a document, its stored file and everything extracted from it
+      description: >
+        Pages, sections, chunks, evidence, facts, calculations, jobs, reviews, quality issues,
+        comparisons and document-based scenarios are deleted with it; companies, watchlists and
+        the audit trail are not. Storage is deleted first, so a failure (503) changes nothing and
+        can be retried. Repeating the delete answers 404.
       parameters:
         - $ref: "#/components/parameters/DocumentId"
       responses:
         "204":
           description: Deleted
+        "404":
+          description: No such document for this user
+        "503":
+          description: Storage or database unavailable; nothing was deleted
 
   /documents/{documentId}/pages:
     get:
@@ -525,19 +556,34 @@ paths:
           in: query
           schema:
             type: string
-            enum: [accepted, needs_review, corrected, rejected]
-        - name: confidence
+            enum: [all, needs_review, pending, pending_review, accepted, corrected, rejected]
+        - name: confidence_tier
           in: query
           schema:
             type: string
+            enum: [high, medium, low]
+        - name: document_id
+          in: query
+          schema:
+            type: string
+            format: uuid
         - name: metric
           in: query
           schema:
             type: string
-        - name: period_label
+            maxLength: 64
+        - name: period
           in: query
           schema:
             type: string
+            maxLength: 40
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
         - name: document_id
           in: query
           schema:
@@ -1045,9 +1091,15 @@ paths:
 
 components:
   securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-prospect_session
+      description: Browsers. Writes also need X-CSRF-Token (from SessionInfo) and a trusted Origin.
     sessionToken:
       type: http
       scheme: bearer
+      description: Non-browser clients (the same token); no CSRF token needed.
 
   parameters:
     DocumentId:
@@ -1146,15 +1198,19 @@ components:
               type: string
               nullable: true
 
-    SessionToken:
+    SessionInfo:
       type: object
-      required: [token, expires_at]
+      required: [issued_at, expires_at, csrf_token]
       properties:
-        token:
+        issued_at:
           type: string
+          format: date-time
         expires_at:
           type: string
           format: date-time
+        csrf_token:
+          type: string
+          description: Send as X-CSRF-Token on POST/PATCH/DELETE; changes with every session
 
     DocumentRef:
       type: object
@@ -1421,11 +1477,14 @@ components:
 
     DocumentCreate:
       type: object
-      required: [filename, content_type, size_bytes]
+      required: [filename, content_type, size_bytes, sha256]
       properties:
         filename:
           type: string
-          maxLength: 255
+          maxLength: 1000
+          description: >
+            Display only. Stored NFKC-normalized, last path component, without control or format
+            characters, at most 255 characters.
         content_type:
           type: string
           enum: [application/pdf]
@@ -1447,7 +1506,9 @@ components:
         sha256:
           type: string
           pattern: "^[0-9a-f]{64}$"
-          description: SHA-256 of the file; the worker refuses stored bytes that do not match
+          description: >
+            SHA-256 of the file (hex). Signed into the upload URL as x-amz-checksum-sha256 (the
+            upload headers include it); checked again on completion and by the worker.
 
     DocumentUpload:
       type: object
@@ -1504,6 +1565,11 @@ components:
         processing_error:
           type: string
           nullable: true
+        threat_scan:
+          type: string
+          enum: [clean, not_scanned]
+          nullable: true
+          description: Threat scan result; null until the worker reaches the scan
         created_at:
           type: string
           format: date-time

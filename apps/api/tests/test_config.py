@@ -12,6 +12,8 @@ REQUIRED = {
     "object_storage_bucket": "b",
     "object_storage_access_key": "k",
     "object_storage_secret_key": "s",
+    "allowed_origins": "https://prospect.example",
+    "document_scanner": "none",
 }
 
 
@@ -54,3 +56,43 @@ def test_lease_must_outlast_the_processing_timeout():
             processing_timeout_seconds=600,
             processing_lease_seconds=300,
         )
+
+
+# --- P1: production refuses insecure browser and scanning settings ---------------------------
+
+
+def production(**overrides):
+    return Settings(**(REQUIRED | {"app_secret": STRONG, "environment": "production"} | overrides))
+
+
+def test_production_is_valid_with_required_settings():
+    production()
+
+
+@pytest.mark.parametrize(
+    ("override", "problem"),
+    [
+        ({"allowed_origins": "http://prospect.example"}, "https:// origins"),
+        ({"allowed_origins": "*"}, "no '\*'"),
+        ({"allowed_origins": "https://prospect.example/"}, "exact origins"),
+        ({"session_cookie_secure": False}, "SESSION_COOKIE_SECURE"),
+        ({"document_scanner": None}, "DOCUMENT_SCANNER"),
+    ],
+)
+def test_production_refuses_insecure_settings(override, problem):
+    with pytest.raises(ValidationError, match=problem):
+        production(**override)
+
+
+@pytest.mark.parametrize("missing", ["app_secret", "database_url", "object_storage_secret_key"])
+def test_missing_required_secret_fails_startup(monkeypatch, missing):
+    monkeypatch.delenv(missing.upper(), raising=False)
+    values = REQUIRED | {"app_secret": STRONG, "environment": "production"}
+    values.pop(missing, None)
+    with pytest.raises(ValidationError, match=missing):
+        Settings(_env_file=None, **values)
+
+
+def test_wildcard_origin_refused_even_in_development():
+    with pytest.raises(ValidationError, match="no '\*'"):
+        Settings(**(REQUIRED | {"allowed_origins": "*", "environment": "development"}))

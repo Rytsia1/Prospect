@@ -35,7 +35,6 @@ export default function DataQualityPage() {
         document_id: docId,
         severity: severityFilter || undefined,
         status: statusFilter || undefined,
-        run_fresh: true,
       });
       setIssues(res.items);
       setSummary(res.summary);

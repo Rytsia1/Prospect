@@ -51,3 +51,23 @@ def storage():
     yield storage
     app.dependency_overrides.clear()
     server.stop()
+
+
+@pytest.fixture
+def tune(monkeypatch):
+    """Lower a setting for one test only."""
+    from app.config import get_settings
+
+    def set_(**values):
+        for name, value in values.items():
+            monkeypatch.setattr(get_settings(), name, value)
+
+    return set_
+
+
+@pytest.fixture(scope="module")
+def report(tmp_path_factory) -> bytes:
+    """A realistic annual report PDF (tests/sample_pdf.py)."""
+    from sample_pdf import build_sample_report
+
+    return build_sample_report(tmp_path_factory.mktemp("report") / "r.pdf").read_bytes()

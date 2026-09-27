@@ -15,12 +15,12 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sample_pdf import build_report_2024, build_sample_report
+from sample_pdf import build_report_2024
 from sqlalchemy import delete, select, update
 from test_documents import PDF, complete, create, put_file, storage_key
 from test_worker import only_this_tests_jobs, state  # noqa: F401 (autouse fixture)
 
-from app.auth import start_session, token_for
+from app.auth import cookie_name, start_session, token_for
 from app.config import get_settings
 from app.db import SessionLocal
 from app.main import app
@@ -42,24 +42,8 @@ client = TestClient(app)
 API = "/api/v1"
 
 
-@pytest.fixture
-def tune(monkeypatch):
-    """Lower a setting for one test only."""
-
-    def set_(**values):
-        for name, value in values.items():
-            monkeypatch.setattr(get_settings(), name, value)
-
-    return set_
-
-
-@pytest.fixture(scope="module")
-def report(tmp_path_factory) -> bytes:
-    return build_sample_report(tmp_path_factory.mktemp("sec") / "r.pdf").read_bytes()
-
-
 def user_session() -> tuple[dict[str, str], str]:
-    token = client.post(f"{API}/sessions").json()["token"]
+    token = client.post(f"{API}/sessions").cookies[cookie_name()]
     return {"Authorization": f"Bearer {token}"}, token
 
 
@@ -69,6 +53,7 @@ def bearer(token: str) -> dict[str, str]:
 
 def ready_document(storage, headers, data: bytes, **fields) -> str:
     """Upload through the API and process it."""
+    fields = {"sha256": hashlib.sha256(data).hexdigest()} | fields
     created = create(headers, size_bytes=len(data), **fields).json()
     put_file(created, data)
     assert complete(headers, created["document"]["id"]).status_code == 200
@@ -153,18 +138,19 @@ def test_unknown_session_is_rejected():
 def test_refresh_keeps_the_user_and_revokes_the_old_token(storage):
     headers, _ = user_session()
     created = create(headers).json()
-    fresh = client.post(f"{API}/sessions/refresh", headers=headers).json()
+    fresh = client.post(f"{API}/sessions/refresh", headers=headers).cookies[cookie_name()]
     assert client.get(f"{API}/documents", headers=headers).status_code == 401  # old one revoked
-    listed = client.get(f"{API}/documents", headers=bearer(fresh["token"])).json()["items"]
+    listed = client.get(f"{API}/documents", headers=bearer(fresh)).json()["items"]
     assert [d["id"] for d in listed] == [created["document"]["id"]]  # same owner
 
 
 def test_tokens_expire_after_the_configured_ttl(tune):
     tune(session_ttl_seconds=60)
-    body = client.post(f"{API}/sessions").json()
+    response = client.post(f"{API}/sessions")
+    body = response.json()
     expires = datetime.fromisoformat(body["expires_at"])
     assert timedelta(seconds=55) < expires - datetime.now(UTC) <= timedelta(seconds=60)
-    assert int(body["token"].split(".")[3]) == int(expires.timestamp())
+    assert int(response.cookies[cookie_name()].split(".")[3]) == int(expires.timestamp())
 
 
 def test_tokens_never_reach_the_logs(caplog):
@@ -350,7 +336,12 @@ def test_storage_quota(tune):
 def test_concurrent_uploads_cannot_bypass_the_quota(tune):
     tune(quota_max_documents=3)
     headers, _ = user_session()
-    body = {"filename": "r.pdf", "content_type": "application/pdf", "size_bytes": 10}
+    body = {
+        "filename": "r.pdf",
+        "content_type": "application/pdf",
+        "size_bytes": 10,
+        "sha256": "0" * 64,
+    }
 
     def attempt(_):
         return TestClient(app).post(f"{API}/documents", json=body, headers=headers).status_code
@@ -461,7 +452,8 @@ def test_sweep_releases_abandoned_uploads_and_failed_objects(storage):
 
     live = create(headers).json()
     put_file(live)  # a fresh, in-progress upload
-    sweep(storage)
+    while any(sweep(storage).values()):  # batches of 100; the test database is shared
+        pass
     for doc_id in (abandoned_id, failed_id):
         assert storage.stat(storage_key(doc_id)) is None
         with SessionLocal() as s:

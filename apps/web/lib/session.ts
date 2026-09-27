@@ -1,16 +1,14 @@
-// Session token lifecycle on the client. The server is the authority (it verifies the signature
-// and can revoke a session); the client only reads the signed times to refresh before expiry.
-// Token: v1.<session_id>.<issued_at>.<expires_at>.<signature>  (times in Unix seconds)
+// Session lifecycle on the client. The token lives only in an HttpOnly cookie that JavaScript
+// cannot read; the API tells the page the session's times and its CSRF token (SessionInfo).
+// The server stays the authority: it verifies the signature and can revoke a session.
 
-export type TokenState = "valid" | "refresh" | "expired";
+export type SessionInfo = { issued_at: string; expires_at: string; csrf_token: string };
+export type SessionState = "valid" | "refresh" | "expired";
 
 /** valid: use it; refresh: past half its lifetime, swap it; expired/unreadable: start over. */
-export function tokenState(token: string, nowMs: number): TokenState {
-  const parts = token.split(".");
-  const issued = Number(parts[2]) * 1000;
-  const expires = Number(parts[3]) * 1000;
-  if (parts.length !== 5 || parts[0] !== "v1" || !(expires > issued) || nowMs >= expires) {
-    return "expired";
-  }
+export function sessionState(info: SessionInfo, nowMs: number): SessionState {
+  const issued = Date.parse(info.issued_at);
+  const expires = Date.parse(info.expires_at);
+  if (!(expires > issued) || nowMs >= expires || !info.csrf_token) return "expired";
   return nowMs >= issued + (expires - issued) / 2 ? "refresh" : "valid";
 }

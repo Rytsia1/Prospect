@@ -74,9 +74,9 @@ def record_audit_event(
 def list_audit_events(
     user_id: CurrentUserId,
     session: DbSession,
-    entity_type: Annotated[str | None, Query()] = None,
-    entity_id: Annotated[str | None, Query()] = None,
-    event_type: Annotated[str | None, Query()] = None,
+    entity_type: Annotated[str | None, Query(max_length=50)] = None,
+    entity_id: Annotated[str | None, Query(max_length=100)] = None,
+    event_type: Annotated[str | None, Query(max_length=50)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> AuditEventList:
     """Retrieve immutable audit events for the authenticated user."""

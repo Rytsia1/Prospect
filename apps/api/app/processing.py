@@ -128,11 +128,13 @@ def parse_pdf(
 ) -> list[ParsedPage]:
     """Parse a PDF within limits (None = unlimited). Run untrusted files via app/sandbox.py."""
     try:
-        doc = pymupdf.open(path)
+        doc = pymupdf.open(path, filetype="pdf")  # never XPS, EPUB or images
     except Exception:
         raise ProcessingError("The PDF could not be read. It may be damaged.") from None
     budget = _Budget(max_text_bytes, max_table_cells)
     with doc:
+        if not doc.is_pdf:
+            raise ProcessingError("The file is not a valid PDF.")
         if doc.needs_pass:
             raise ProcessingError("The PDF is password-protected.")
         if doc.page_count == 0:

@@ -59,9 +59,9 @@ def test_managed_database_urls_get_psycopg_driver():
         assert Settings(database_url=url).database_url == "postgresql+psycopg://u:p@h/db"
 
 
-def test_cors_origins_parsed():
-    s = Settings(cors_origins="https://a.example, https://b.example,")
-    assert s.cors_origin_list == ["https://a.example", "https://b.example"]
+def test_allowed_origins_parsed():
+    s = Settings(allowed_origins="https://a.example, https://b.example,")
+    assert s.origin_list == ["https://a.example", "https://b.example"]
 
 
 def test_secrets_are_not_printed():

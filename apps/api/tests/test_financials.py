@@ -2,6 +2,7 @@
 → evidence → reconciliation → export. Runs when TEST_DATABASE_URL is set."""
 
 import csv
+import hashlib
 import io
 import os
 import uuid
@@ -40,6 +41,7 @@ def upload(headers, data: bytes, filename: str, fiscal_year: int, company: str |
         "size_bytes": len(data),
         "fiscal_year": fiscal_year,
         "company_name": company,
+        "sha256": hashlib.sha256(data).hexdigest(),
     }
     created = client.post(API, json=body, headers=headers).json()
     httpx.put(created["upload"]["url"], content=data, headers=created["upload"]["headers"])

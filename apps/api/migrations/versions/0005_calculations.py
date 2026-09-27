@@ -148,9 +148,10 @@ def downgrade() -> None:
     op.execute("DROP TYPE IF EXISTS calculation_status")
     ids = ", ".join(f"'{_metric_id(k)}'" for k, *_ in METRICS)
     # Facts cascade from their evidence; then the metric rows can go.
+    # ids are uuid5 constants computed from METRICS in this file, never external input.
     op.execute(
-        "DELETE FROM evidence WHERE id IN "
+        "DELETE FROM evidence WHERE id IN "  # noqa: S608
         f"(SELECT evidence_id FROM financial_facts WHERE metric_id IN ({ids}))"
     )
-    op.execute(f"DELETE FROM financial_metrics WHERE id IN ({ids})")
+    op.execute(f"DELETE FROM financial_metrics WHERE id IN ({ids})")  # noqa: S608
     op.drop_constraint("uq_financial_facts_identity", "financial_facts", type_="unique")

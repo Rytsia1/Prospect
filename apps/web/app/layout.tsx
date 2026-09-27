@@ -3,6 +3,10 @@ import Link from "next/link";
 import { Nav } from "@/components/nav";
 import "./globals.css";
 
+// Rendered per request so Next can put middleware.ts's CSP nonce on its scripts (a page
+// prerendered at build time would carry no nonce and be blocked by the policy).
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: { default: "Prospect", template: "%s · Prospect" },
   description: "Evidence-first financial document intelligence",

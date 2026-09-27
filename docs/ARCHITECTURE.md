@@ -212,11 +212,11 @@ Docker Compose may be provided as an optional convenience, but no production fea
 
 ## 7. Environment Variables
 
-Frontend:
+Frontend (server-side only; the browser calls the app's own `/api/v1`, proxied to the API):
 
 ```text
-NEXT_PUBLIC_API_URL
-NEXT_PUBLIC_APP_URL
+API_ORIGIN
+STORAGE_ORIGIN
 ```
 
 Backend:
@@ -230,7 +230,8 @@ OBJECT_STORAGE_SECRET_KEY
 LLM_API_KEY
 EMBEDDING_API_KEY
 APP_SECRET
-CORS_ORIGINS
+ALLOWED_ORIGINS
+DOCUMENT_SCANNER
 ```
 
 Worker:

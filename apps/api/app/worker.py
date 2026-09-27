@@ -2,8 +2,10 @@
 
 Run: `python -m app.worker`. Deployed as its own Railway/Render service from this codebase.
 
-Lifecycle (PRD §22): UPLOADED → PROCESSING → READY, or FAILED. The PDF is analysed in a killable
-child process (app/sandbox.py) with a timeout and resource limits. Problems with the document
+Lifecycle (PRD §22): UPLOADED → PROCESSING → READY, or FAILED. Each file passes, in order: exists
+in storage → size matches → SHA-256 matches → PDF signature plausible → threat scan
+(app/scanning.py) → the parser opens it and every page within limits, in a killable child process
+(app/sandbox.py) with a timeout and resource limits. Problems with the document
 itself (unreadable, too large, too slow, over a limit) fail it at once: retrying cannot help and
 would amplify a malicious workload. Only infrastructure errors (storage, database) are retried,
 with exponential backoff and jitter, up to PROCESSING_MAX_ATTEMPTS. A job whose worker died is
@@ -22,6 +24,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
@@ -29,7 +32,8 @@ from sqlalchemy.orm import Session
 from app.analytics import FactInput, calculate
 from app.config import get_settings
 from app.db import SessionLocal
-from app.logs import configure_logging, security_event
+from app.documents import PDF_HEADER_WINDOW, PDF_MAGIC, remove_document
+from app.logs import audit_event, configure_logging, security_event
 from app.models import (
     Calculation,
     CalculationInput,
@@ -54,6 +58,7 @@ from app.models import (
 from app.pipeline import Analysis, Limits, analyze
 from app.processing import ProcessingError, ProcessingLimitError
 from app.sandbox import ProcessingTimeout, run_isolated
+from app.scanning import DocumentScanner, ScannerUnavailable, get_scanner
 from app.storage import ObjectStorage, get_storage
 
 log = logging.getLogger("prospect.worker")
@@ -93,7 +98,23 @@ def claim_job(session: Session) -> ProcessingJob | None:
     return job
 
 
-def process_next(storage: ObjectStorage) -> bool:
+class ChecksumMismatch(ProcessingError):
+    pass
+
+
+def _verify_file(path: Path, size: int, sha256: str | None) -> None:
+    """Integrity first (these are the declared bytes), then plausibility as a PDF. Only the
+    parser, later and sandboxed, establishes that the file really is one."""
+    if path.stat().st_size != size or size > get_settings().max_upload_bytes:
+        raise ProcessingError("Uploaded file size does not match.")
+    if sha256 and _sha256(path) != sha256:
+        raise ChecksumMismatch("The stored file does not match the uploaded file.")
+    with path.open("rb") as f:
+        if PDF_MAGIC not in f.read(PDF_HEADER_WINDOW):
+            raise ProcessingError("The file is not a valid PDF.")
+
+
+def process_next(storage: ObjectStorage, scanner: DocumentScanner | None = None) -> bool:
     """Process one job. Returns False when there was nothing to do."""
     settings = get_settings()
     with SessionLocal() as session:
@@ -103,12 +124,15 @@ def process_next(storage: ObjectStorage) -> bool:
         job_id, document_id, attempts = job.id, job.document_id, job.attempts
         document = session.get_one(Document, document_id)
         storage_key, expected_sha256 = document.storage_key, document.sha256
+        size, user_id = document.size_bytes, document.user_id
 
     max_attempts = settings.processing_max_attempts
     fields = {"job_id": str(job_id), "document_id": str(document_id), "attempt": attempts}
+    audit: dict[str, Any] = {"user_id": user_id, "entity_id": document_id, "job_id": job_id}
     if attempts > max_attempts:  # reclaimed after crashing its worker too many times
         _fail(job_id, document_id, INTERNAL_ERROR)
         log.error("job abandoned", extra={"fields": fields})
+        audit_event("processing_failed", **audit, result="failed", reason="abandoned")
         return True
 
     limits = Limits(
@@ -121,15 +145,20 @@ def process_next(storage: ObjectStorage) -> bool:
     )
     started = time.perf_counter()
     log.info("processing started", extra={"fields": fields})
+    audit_event("processing_started", **audit, attempt=attempts)
+    reason = None  # set on permanent failure: a short machine reason for the audit trail
     try:
         # Deleted after every attempt, whatever happens (ignore_cleanup_errors: on Windows a
         # killed child can briefly hold the file).
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             path = Path(tmp) / "document.pdf"
             storage.download_file(storage_key, path)
-            if expected_sha256 and _sha256(path) != expected_sha256:
-                security_event("upload_checksum_mismatch", document_id=str(document_id))
-                raise ProcessingError("The stored file does not match the uploaded file.")
+            _verify_file(path, size, expected_sha256)
+            scan = (scanner or get_scanner()).scan(path)
+            if scan.verdict == "infected":
+                security_event("upload_rejected_malware", signature=scan.signature, **fields)
+                raise ProcessingError("The file was rejected by the security scan.")
+            _record_scan(document_id, scan.verdict)
             analysis: Analysis = run_isolated(
                 analyze,
                 (path, limits),
@@ -140,25 +169,44 @@ def process_next(storage: ObjectStorage) -> bool:
     except ProcessingTimeout as e:
         security_event("processing_timeout", **fields)
         _fail(job_id, document_id, str(e))
+        reason = "timeout"
     except ProcessingLimitError as e:
         security_event("processing_resource_limit", **fields, reason=str(e))
         _fail(job_id, document_id, str(e))
+        reason = "resource_limit"
+    except ChecksumMismatch as e:
+        security_event("upload_checksum_mismatch", **fields)
+        _fail(job_id, document_id, str(e))
+        reason = "checksum_mismatch"
     except ProcessingError as e:  # the document itself: retrying cannot help
         _fail(job_id, document_id, str(e))
         log.warning("processing rejected document", extra={"fields": fields | {"reason": str(e)}})
-    except Exception:  # infrastructure (storage, database): worth retrying, boundedly
-        log.exception("processing error", extra={"fields": fields})
+        reason = "rejected_document"
+    except Exception as e:  # infrastructure (storage, database, scanner): retried, boundedly
+        if isinstance(e, ScannerUnavailable):
+            security_event("threat_scan_unavailable", **fields, reason=str(e))
+        else:
+            log.exception("processing error", extra={"fields": fields})
         if attempts < max_attempts:
             _requeue(job_id, document_id, attempts)
-        else:
+        else:  # fail closed: a file that could not be scanned is never parsed
             _fail(job_id, document_id, INTERNAL_ERROR)
+            reason = "scanner_unavailable" if isinstance(e, ScannerUnavailable) else "internal"
     else:
         duration = round(time.perf_counter() - started, 2)
         log.info(
             "processing finished",
             extra={"fields": fields | {"pages": len(analysis.pages), "duration_s": duration}},
         )
+        audit_event("processing_completed", **audit, pages=len(analysis.pages))
+    if reason:
+        audit_event("processing_failed", **audit, result="failed", reason=reason)
     return True
+
+
+def _record_scan(document_id: uuid.UUID, verdict: str) -> None:
+    with SessionLocal() as session, session.begin():
+        session.get_one(Document, document_id).threat_scan = verdict
 
 
 def _sha256(path: Path) -> str:
@@ -172,7 +220,7 @@ def _sha256(path: Path) -> str:
 def retry_delay(attempts: int) -> float:
     """Exponential backoff (base × 2^(attempts−1)) plus up to 50% random jitter."""
     base = get_settings().processing_retry_base_seconds * 2 ** max(attempts - 1, 0)
-    return base * (1 + random.random() / 2)
+    return base * (1 + random.random() / 2)  # noqa: S311 (jitter, not cryptography)
 
 
 def _store(job_id: uuid.UUID, document_id: uuid.UUID, analysis: Analysis) -> None:
@@ -372,12 +420,15 @@ def sweep(storage: ObjectStorage) -> dict[str, int]:
     - uploads never completed once their signed URL expired (no write can still arrive):
       delete the object if any, mark the document FAILED;
     - stored PDFs of FAILED documents (never read again);
+    - FAILED documents' records after FAILED_DOCUMENT_RETENTION_HOURS;
+    - every document older than DOCUMENT_RETENTION_DAYS, when that retention is configured;
     - expired rate-limit counters and long-expired sessions.
+    Temporary files need no sweep: each processing attempt deletes its own directory.
     """
     settings = get_settings()
     now = datetime.now(UTC)
     abandoned_before = now - timedelta(seconds=settings.signed_url_ttl_seconds + 60)
-    counts = {"abandoned_uploads": 0, "deleted_objects": 0}
+    counts = {"abandoned_uploads": 0, "deleted_objects": 0, "expired_documents": 0}
     with SessionLocal() as session:
         stale = session.scalars(
             select(Document)
@@ -411,6 +462,35 @@ def sweep(storage: ObjectStorage) -> dict[str, int]:
         session.execute(delete(RateLimitCounter).where(RateLimitCounter.expires_at < now))
         session.execute(delete(UserSession).where(UserSession.expires_at < now - timedelta(days=7)))
         session.commit()
+
+        failed_before = now - timedelta(hours=settings.failed_document_retention_hours)
+        expired = [
+            and_(
+                Document.status == DocumentStatus.FAILED,
+                Document.object_deleted_at.is_not(None),
+                Document.updated_at < failed_before,
+            )
+        ]
+        if settings.document_retention_days:
+            expired.append(
+                Document.created_at < now - timedelta(days=settings.document_retention_days)
+            )
+        for document in session.scalars(
+            select(Document).where(or_(*expired)).limit(100).with_for_update(skip_locked=True)
+        ).all():
+            user_id, document_id = document.user_id, document.id
+            try:
+                remove_document(session, storage, document)  # commits
+            except Exception:
+                session.rollback()
+                log.exception(
+                    "retention delete failed", extra={"fields": {"document_id": str(document_id)}}
+                )
+                continue  # retried on the next sweep
+            counts["expired_documents"] += 1
+            audit_event(
+                "document_deleted", user_id=user_id, entity_id=document_id, reason="retention"
+            )
     if any(counts.values()):
         log.info("cleanup", extra={"fields": counts})
     return counts
@@ -433,7 +513,8 @@ def main() -> None:
 
     # Railway/Render inject PORT when a service should answer health checks.
     if port := os.getenv("PORT"):
-        server = ThreadingHTTPServer(("0.0.0.0", int(port)), _Health)
+        # The platform health probe reaches the container from outside: listen on all interfaces.
+        server = ThreadingHTTPServer(("0.0.0.0", int(port)), _Health)  # noqa: S104
         threading.Thread(target=server.serve_forever, daemon=True).start()
 
     storage = get_storage()

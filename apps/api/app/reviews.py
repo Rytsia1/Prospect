@@ -130,17 +130,28 @@ def list_facts_for_review(
     user_id: CurrentUserId,
     session: DbSession,
     status: Annotated[
-        str | None, Query(description="all, pending, accepted, corrected, rejected")
+        Literal[
+            "all", "needs_review", "pending", "pending_review", "accepted", "corrected", "rejected"
+        ]
+        | None,
+        Query(),
     ] = None,
     confidence_tier: Annotated[Literal["high", "medium", "low"] | None, Query()] = None,
     document_id: Annotated[uuid.UUID | None, Query()] = None,
-    metric: Annotated[str | None, Query()] = None,
-    period: Annotated[str | None, Query()] = None,
+    metric: Annotated[str | None, Query(max_length=64)] = None,
+    period: Annotated[str | None, Query(max_length=40)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> ReviewList:
     """Retrieve facts for review with filtering across documents owned by user."""
     query = (
-        select(FinancialFact, FinancialMetric, Evidence, DocumentPage, DocumentSection, Document)
+        select(
+            FinancialFact,
+            FinancialMetric,
+            Evidence,
+            DocumentPage.page_metadata["label"].astext,  # the label only, never the page text
+            DocumentSection,
+            Document,
+        )
         .join(FinancialMetric, FinancialMetric.id == FinancialFact.metric_id)
         .join(Evidence, Evidence.id == FinancialFact.evidence_id)
         .join(DocumentPage, DocumentPage.id == Evidence.page_id)
@@ -158,7 +169,7 @@ def list_facts_for_review(
 
     if status and status.lower() != "all":
         status_clean = status.lower()
-        if status_clean in ("pending", "pending_review"):
+        if status_clean in ("needs_review", "pending", "pending_review"):
             query = query.where(FinancialFact.status == FactStatus.NEEDS_REVIEW)
         elif status_clean == "accepted":
             query = query.where(FinancialFact.status == FactStatus.ACCEPTED)
@@ -203,7 +214,7 @@ def list_facts_for_review(
             evidence=EvidenceOut(
                 id=evidence.id,
                 page_number=evidence.page_number,
-                page_label=page.page_metadata.get("label"),
+                page_label=page_label,
                 section_title=section.title,
                 chunk_id=evidence.chunk_id,
                 kind=evidence.evidence_type.value,
@@ -212,7 +223,7 @@ def list_facts_for_review(
                 unit=evidence.locator.get("unit"),
             ),
         )
-        for fact, metric_row, evidence, page, section, doc in rows
+        for fact, metric_row, evidence, page_label, section, doc in rows
     ]
     return ReviewList(items=items, total_count=len(items))
 

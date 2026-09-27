@@ -1,26 +1,29 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { sha256Hex } from "./documents.ts";
-import { tokenState } from "./session.ts";
+import { type SessionInfo, sessionState } from "./session.ts";
 
-const issued = 1_700_000_000;
-const token = `v1.3f1c.${issued}.${issued + 86_400}.abcdef`;
-const at = (seconds: number) => (issued + seconds) * 1000;
+const issued = Date.parse("2026-01-01T00:00:00Z");
+const info: SessionInfo = {
+  issued_at: "2026-01-01T00:00:00Z",
+  expires_at: "2026-01-02T00:00:00Z",
+  csrf_token: "c".repeat(64),
+};
+const at = (seconds: number) => issued + seconds * 1000;
 
-test("a fresh token is used as is", () => {
-  assert.equal(tokenState(token, at(60)), "valid");
+test("a fresh session is used as is", () => {
+  assert.equal(sessionState(info, at(60)), "valid");
 });
 
-test("past half its lifetime the token is refreshed", () => {
-  assert.equal(tokenState(token, at(43_200)), "refresh");
-  assert.equal(tokenState(token, at(86_399)), "refresh");
+test("past half its lifetime the session is refreshed", () => {
+  assert.equal(sessionState(info, at(43_200)), "refresh");
+  assert.equal(sessionState(info, at(86_399)), "refresh");
 });
 
-test("expired, legacy and malformed tokens start a new session", () => {
-  assert.equal(tokenState(token, at(86_400)), "expired");
-  assert.equal(tokenState("0b7ad18e-uuid.signature", at(0)), "expired"); // pre-hardening format
-  assert.equal(tokenState("v1.a.b.c.d", at(0)), "expired");
-  assert.equal(tokenState("", at(0)), "expired");
+test("expired or malformed sessions start a new one", () => {
+  assert.equal(sessionState(info, at(86_400)), "expired");
+  assert.equal(sessionState({ ...info, expires_at: "not a date" }, at(0)), "expired");
+  assert.equal(sessionState({ ...info, csrf_token: "" }, at(0)), "expired");
 });
 
 test("upload checksum matches SHA-256", async () => {

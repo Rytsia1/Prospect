@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import exports
@@ -21,7 +21,7 @@ from app.auth import CurrentUserId, limit_user
 from app.config import get_settings
 from app.documents import DbSession, DecimalStr, FactOut, _facts, _owned_document
 from app.errors import ApiError
-from app.logs import security_event
+from app.logs import audit_event, security_event
 from app.models import Document, DocumentStatus, PeriodType
 from app.workspace import METRIC_NAMES, TIMELINE_METRICS, SourceFact, build
 
@@ -134,16 +134,30 @@ def _result_out(period: str, r: Result) -> ResultOut:
 def _scope_documents(
     session: Session, user_id: uuid.UUID, document: Document, scope: Scope
 ) -> list[Document]:
-    """The document alone, or every READY report of the same company owned by the same user."""
+    """The document alone, or every READY report of the same company owned by the same user.
+
+    A document linked to a company workspace groups by that company's id only, so a same-named
+    report that was never linked (or another company that happens to share the name) is never
+    merged in. An unlinked document groups by its exact normalized label among unlinked ones:
+    "Company A" and "Company A Inc." stay apart. Ownership comes first in either case.
+    """
     if scope == "document" or not document.company_name:
         return [document]
+    same_company = (
+        Document.company_id == document.company_id
+        if document.company_id
+        else and_(
+            Document.company_id.is_(None),
+            func.lower(Document.company_name) == document.company_name.lower(),
+        )
+    )
     cap = get_settings().financials_max_documents
     documents = list(
         session.scalars(
             select(Document)
             .where(
                 Document.user_id == user_id,  # ownership before any company-scoped query
-                func.lower(Document.company_name) == document.company_name.lower(),
+                same_company,
                 or_(Document.id == document.id, Document.status == DocumentStatus.READY),
             )
             .order_by(Document.fiscal_year, Document.created_at)
@@ -256,6 +270,7 @@ def get_evidence(
 
 def _too_large(request: Request, reason: str, size: int, limit: int) -> ApiError:
     security_event("export_limit_exceeded", request, reason=reason, size=size, limit=limit)
+    audit_event("export_failed", request, result="rejected", reason=f"too many {reason}")
     return ApiError(
         413,
         "export_too_large",
@@ -286,6 +301,15 @@ def export_financials(
     body, media_type = exports.serialize(tables, view, format, datetime.now(UTC))
     if len(body) > settings.export_max_bytes:
         raise _too_large(request, "bytes", len(body), settings.export_max_bytes)
+    audit_event(
+        "export_created",
+        request,
+        entity_id=document_id,
+        format=format,
+        scope=view.scope,
+        records=records,
+        documents=len(view.documents),
+    )
     stem = view.company_name if view.scope == "company" else view.documents[0].filename
     name = f"prospect-{(stem or 'export').rsplit('.pdf', 1)[0]}.{format}"
     safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in name)

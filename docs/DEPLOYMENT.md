@@ -59,9 +59,22 @@ DATABASE_URL
 OBJECT_STORAGE_*
 LLM_API_KEY
 APP_SECRET          # ≥ 32 random bytes; startup fails on a weak or placeholder value
-CORS_ORIGINS
+ALLOWED_ORIGINS     # https://prospect.example.com (the web app only; CORS + CSRF)
+DOCUMENT_SCANNER    # clamav (recommended) or none; startup fails if unset
+CLAMAV_HOST / CLAMAV_PORT
+DOCUMENT_RETENTION_DAYS           # optional; unset keeps documents until the user deletes them
 FORWARDED_ALLOW_IPS # "*" only if the API is reachable solely through the platform proxy
 ```
+
+Once per bucket, with credentials allowed to configure it, apply the storage lifecycle rules
+(abandoned uploads expire after a day even if the worker never runs):
+
+```bash
+python -m app.storage lifecycle
+```
+
+The bucket's CORS rule must allow `PUT` from the web origin with the headers `Content-Type` and
+`x-amz-checksum-sha256`.
 
 Limits, quotas and rate limits have safe defaults; see docs/SECURITY.md to tune them.
 
@@ -93,8 +106,8 @@ Deploy Next.js to Vercel.
 Configure:
 
 ```text
-NEXT_PUBLIC_API_URL=https://api.example.com
-NEXT_PUBLIC_APP_URL=https://prospect.example.com
+API_ORIGIN=https://api.example.com          # /api/v1 is proxied here (set before building)
+STORAGE_ORIGIN=https://<account-id>.r2.cloudflarestorage.com
 ```
 
 ### Step 6 — Custom Domain
@@ -115,10 +128,11 @@ Railway/Render handles the API domain.
 Set:
 
 ```text
-CORS_ORIGINS=https://prospect.example.com
+ALLOWED_ORIGINS=https://prospect.example.com
 ```
 
-Do not use `*` in production when credentials are involved.
+`*` is refused at startup. Browsers use the same-origin proxy, so CORS never carries
+credentials; it only serves Bearer-token clients on a trusted origin.
 
 ## 4. Upload Architecture
 
@@ -189,15 +203,18 @@ Vercel preview deployments can be used for frontend changes.
 - [ ] deployed
 - [ ] HTTPS active
 - [ ] environment variables configured
-- [ ] API URL correct
+- [ ] `API_ORIGIN` and `STORAGE_ORIGIN` set before the build
 - [ ] production build succeeds
+- [ ] pages send Content-Security-Policy with a nonce and no console CSP violations
 
 ### API
 
 - [ ] deployed
 - [ ] `/health` works
 - [ ] migrations applied
-- [ ] CORS configured
+- [ ] `ALLOWED_ORIGINS` = the web origin only (https)
+- [ ] `DOCUMENT_SCANNER` chosen explicitly (clamav, or none accepted knowingly)
+- [ ] /docs and /openapi.json answer 404
 - [ ] secrets configured
 - [ ] `ENVIRONMENT=production` and a generated `APP_SECRET` (startup refuses weak secrets)
 - [ ] rate limits answer 429 with `Retry-After` (docs/SECURITY.md §6)
@@ -210,6 +227,7 @@ Vercel preview deployments can be used for frontend changes.
 - [ ] can access object storage
 - [ ] processes test PDF
 - [ ] failure state works
+- [ ] clamd reachable, `StreamMaxLength` ≥ `MAX_UPLOAD_BYTES` (if DOCUMENT_SCANNER=clamav)
 - [ ] service memory limit set (second boundary around the parser child processes)
 
 ### Database
@@ -221,6 +239,8 @@ Vercel preview deployments can be used for frontend changes.
 ### Storage
 
 - [ ] bucket private
+- [ ] lifecycle rules applied (`python -m app.storage lifecycle`)
+- [ ] bucket CORS allows PUT with Content-Type and x-amz-checksum-sha256 from the web origin only
 - [ ] upload works
 - [ ] download via signed URL works
 - [ ] deletion works

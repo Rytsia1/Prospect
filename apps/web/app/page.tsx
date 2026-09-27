@@ -1,6 +1,7 @@
 import Link from "next/link";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Server-side only (this page renders on the server): the API origin is not public config.
+const API_URL = process.env.API_ORIGIN ?? "http://localhost:8000";
 
 export const dynamic = "force-dynamic";
 

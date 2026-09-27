@@ -52,7 +52,8 @@ API (`apps/api/.env`, copied from `apps/api/.env.example`):
 | `OBJECT_STORAGE_BUCKET` | Private bucket name |
 | `OBJECT_STORAGE_ACCESS_KEY` / `OBJECT_STORAGE_SECRET_KEY` | Bucket credentials |
 | `APP_SECRET` | Application signing secret (long random string) |
-| `CORS_ORIGINS` | Comma-separated allowed origins; production = the Vercel domain only |
+| `ALLOWED_ORIGINS` | Trusted browser origins (CORS + CSRF); production = the Vercel domain only |
+| `DOCUMENT_SCANNER` | `clamav` or `none`; required in production (docs/SECURITY.md §4) |
 | `LOG_LEVEL` | Optional, default `INFO` |
 | `MAX_UPLOAD_BYTES` | Optional upload limit, default 52428800 (50 MB) |
 
@@ -60,11 +61,16 @@ Web (`apps/web/.env.local`, copied from `apps/web/.env.example`):
 
 | Variable | Purpose |
 |---|---|
-| `NEXT_PUBLIC_API_URL` | Public URL of the API |
-| `NEXT_PUBLIC_APP_URL` | Public URL of the web app |
+| `API_ORIGIN` | API origin the app proxies `/api/v1` to (server-side; required for builds) |
+| `STORAGE_ORIGIN` | Storage origin that receives signed uploads (CSP `connect-src`) |
 
 `.env` files are git-ignored. Production values belong in the Vercel / Railway / Render
-environment settings. Never put server secrets in `NEXT_PUBLIC_*` variables.
+environment settings. The web app has no `NEXT_PUBLIC_*` variables; never put server secrets in
+one.
+
+The web app pins `postcss` to `^8.5.28` through `overrides` in `apps/web/package.json`: Next 15
+bundles postcss 8.4.31, which has known high-severity advisories (GHSA-6g55-p6wh-862q,
+GHSA-r28c-9q8g-f849). Remove the override once Next ships a fixed postcss.
 
 ## Run the Backend
 
@@ -197,9 +203,11 @@ CI (`.github/workflows/ci.yml`) runs all of the above against PostgreSQL + pgvec
 ## Identity (single-user mode)
 
 Until authentication lands, each browser gets an anonymous identity: `POST /api/v1/sessions`
-returns a token signed with `APP_SECRET`, stored in `localStorage` and sent as a bearer token.
-Every document query is scoped to that user, so documents are isolated per browser. Clearing
-browser storage or rotating `APP_SECRET` loses access to earlier uploads.
+sets a signed, expiring session token as an HttpOnly, SameSite=Strict cookie (JavaScript never
+sees it). The browser reaches the API through the web app's same-origin `/api/v1` proxy, and
+every write carries a CSRF token. Every document query is scoped to that user, so documents are
+isolated per browser. Clearing cookies or rotating `APP_SECRET` loses access to earlier uploads.
+See [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Specification Artifacts
 

@@ -3,7 +3,7 @@ from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Placeholders that ship in .env.example, CI and tests. Never acceptable in production.
@@ -32,7 +32,11 @@ class Settings(BaseSettings):
     # variable can never let a weak APP_SECRET through.
     environment: Literal["development", "production"] = "production"
     database_url: str
-    cors_origins: str = "http://localhost:3000"  # production: only the deployed frontend
+    # Trusted browser origins (comma-separated): CORS and CSRF Origin checks. Production: the
+    # deployed frontend only, https. CORS_ORIGINS is the pre-P1 name, still accepted.
+    allowed_origins: str = Field(
+        "http://localhost:3000", validation_alias=AliasChoices("ALLOWED_ORIGINS", "CORS_ORIGINS")
+    )
     log_level: str = "INFO"
 
     # --- Storage ---------------------------------------------------------------------------
@@ -45,6 +49,9 @@ class Settings(BaseSettings):
     # --- Auth ------------------------------------------------------------------------------
     app_secret: SecretStr  # HMAC key for session tokens; ≥ 32 random bytes in production
     session_ttl_seconds: int = 86_400
+    # The session cookie is HttpOnly, SameSite=Strict, Path=/ and, when secure, Secure with the
+    # __Host- prefix. Production requires secure; only plain-http local development turns it off.
+    session_cookie_secure: bool = True
 
     # --- Rate limits ("<requests>/<window seconds>", per user; sessions per client IP) -----
     rate_limit_sessions: str = "5/60"
@@ -76,6 +83,19 @@ class Settings(BaseSettings):
     quota_max_storage_bytes: int = 2 * 1024**3
     quota_max_active_jobs: int = 3
     quota_max_daily_jobs: int = 50
+
+    # --- Threat scanning and retention -----------------------------------------------------
+    # clamav: scan every PDF with clamd before parsing; none: documents are not scanned (and are
+    # marked so). Production must choose explicitly: unset refuses to start.
+    document_scanner: Literal["none", "clamav"] | None = None
+    clamav_host: str = "localhost"
+    clamav_port: int = 3310
+    clamav_timeout_seconds: float = 60
+    # Days a document is kept before it is deleted with all derived data; unset: kept until the
+    # user deletes it. FAILED documents' records are removed after FAILED_DOCUMENT_RETENTION_HOURS
+    # (their stored files are deleted within minutes by the sweep).
+    document_retention_days: int | None = Field(None, ge=1)
+    failed_document_retention_hours: int = Field(24, ge=1)
 
     # --- Financials / export ---------------------------------------------------------------
     page_default_limit: int = 100
@@ -119,15 +139,27 @@ class Settings(BaseSettings):
     def production_fails_closed(self) -> "Settings":
         if self.processing_lease_seconds <= self.processing_timeout_seconds:
             raise ValueError("PROCESSING_LEASE_SECONDS must exceed PROCESSING_TIMEOUT_SECONDS")
+        origins = self.origin_list
+        if not origins or any(o == "*" or o != o.rstrip("/") for o in origins):
+            raise ValueError("ALLOWED_ORIGINS lists exact origins (scheme://host[:port]), no '*'")
         if self.environment == "production":
             problem = secret_problem(self.app_secret.get_secret_value())
             if problem:
                 raise ValueError(f"APP_SECRET is not safe for production: {problem}")
+            if not all(o.startswith("https://") for o in origins):
+                raise ValueError("ALLOWED_ORIGINS must be https:// origins in production")
+            if not self.session_cookie_secure:
+                raise ValueError("SESSION_COOKIE_SECURE must be true in production")
+            if self.document_scanner is None:
+                raise ValueError(
+                    "DOCUMENT_SCANNER must be set in production: clamav, or none to accept "
+                    "unscanned documents explicitly"
+                )
         return self
 
     @property
-    def cors_origin_list(self) -> list[str]:
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+    def origin_list(self) -> list[str]:
+        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
 
 def secret_problem(secret: str) -> str | None:
