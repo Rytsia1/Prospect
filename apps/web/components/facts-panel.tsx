@@ -30,8 +30,21 @@ export function FactsPanel({ documentId, onShowEvidence }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api<{ items: FinancialFact[] }>(`/documents/${documentId}/metrics`)
-      .then((r) => setFacts(r.items))
+    // The API pages facts (at most 500 per request); follow next_offset to the end.
+    async function load() {
+      const all: FinancialFact[] = [];
+      let offset: number | null = 0;
+      while (offset !== null) {
+        const page: { items: FinancialFact[]; next_offset: number | null } = await api(
+          `/documents/${documentId}/metrics?limit=500&offset=${offset}`,
+        );
+        all.push(...page.items);
+        offset = page.next_offset;
+      }
+      return all;
+    }
+    load()
+      .then(setFacts)
       .catch((e) => setError(e instanceof ApiError ? e.message : "Could not load facts."));
   }, [documentId]);
 

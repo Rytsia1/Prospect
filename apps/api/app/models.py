@@ -101,6 +101,29 @@ class User(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+class UserSession(Base):
+    """A signed bearer token's server-side record: expiry and revocation (app/auth.py)."""
+
+    __tablename__ = "sessions"
+    __table_args__ = (Index("ix_sessions_user_id", "user_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = _created_at()
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RateLimitCounter(Base):
+    """Fixed-window request counters shared by every API instance (app/ratelimit.py)."""
+
+    __tablename__ = "rate_limits"
+
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)  # bucket:subject:window
+    count: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class Company(Base):
     __tablename__ = "companies"
     __table_args__ = (
@@ -146,6 +169,10 @@ class Document(Base):
         _enum(DocumentStatus, "document_status"), default=DocumentStatus.UPLOADING
     )
     processing_error: Mapped[str | None] = mapped_column(Text)
+    # Client-declared SHA-256 (hex) of the file; the worker verifies the stored bytes against it.
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    # Set once the stored object is deleted (failed or abandoned upload); frees storage quota.
+    object_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 
@@ -251,6 +278,7 @@ class ProcessingJob(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     last_error: Mapped[str | None] = mapped_column(Text)
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    run_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # retry backoff
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 

@@ -27,6 +27,7 @@ jobs:
       OBJECT_STORAGE_ACCESS_KEY: ci
       OBJECT_STORAGE_SECRET_KEY: ci
       APP_SECRET: ci
+      ENVIRONMENT: development
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

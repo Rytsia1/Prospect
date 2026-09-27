@@ -1,4 +1,5 @@
 import type { ProspectDocument } from "@/lib/documents";
+import { tokenState } from "./session.ts";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const TOKEN_KEY = "prospect.session";
@@ -24,21 +25,35 @@ export type DocumentUpload = { document: ProspectDocument; upload: SignedUpload 
 
 let pendingToken: Promise<string> | null = null;
 
-// Anonymous per-browser identity (see apps/api/app/auth.py). Only a signed user id is stored;
-// storage credentials never reach the browser.
+// Anonymous per-browser identity (see apps/api/app/auth.py). Only a signed, expiring session
+// token is stored; storage credentials never reach the browser.
+async function issue(path: string, token?: string): Promise<string | null> {
+  const res = await fetch(`${API_URL}/api/v1${path}`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  }).catch(() => null);
+  if (res?.status === 429) {
+    throw new ApiError(429, "rate_limited", "Too many requests. Wait a minute and try again.");
+  }
+  if (!res?.ok) return null;
+  const { token: fresh } = (await res.json()) as { token: string };
+  localStorage.setItem(TOKEN_KEY, fresh);
+  return fresh;
+}
+
 function sessionToken(): Promise<string> {
   const saved = localStorage.getItem(TOKEN_KEY);
-  if (saved) return Promise.resolve(saved);
-  pendingToken ??= fetch(`${API_URL}/api/v1/sessions`, { method: "POST" })
-    .then(async (res) => {
-      if (!res.ok) throw new ApiError(res.status, "session_failed", "Could not start a session");
-      const { token } = (await res.json()) as { token: string };
-      localStorage.setItem(TOKEN_KEY, token);
-      return token;
-    })
-    .finally(() => {
-      pendingToken = null;
-    });
+  const state = saved ? tokenState(saved, Date.now()) : "expired";
+  if (saved && state === "valid") return Promise.resolve(saved);
+  pendingToken ??= (async () => {
+    // Past half its lifetime: swap it for a fresh one (same user, keeps the documents).
+    const refreshed = saved && state === "refresh" ? await issue("/sessions/refresh", saved) : null;
+    const token = refreshed ?? (await issue("/sessions"));
+    if (!token) throw new ApiError(0, "session_failed", "Could not start a session");
+    return token;
+  })().finally(() => {
+    pendingToken = null;
+  });
   return pendingToken;
 }
 

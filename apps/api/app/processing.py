@@ -15,7 +15,6 @@ import pymupdf
 
 log = logging.getLogger("prospect.processing")
 
-MAX_PAGES = 2000
 CHUNK_TARGET_CHARS = 1200  # flush a chunk once adding the next piece would pass this
 CHUNK_MAX_CHARS = 2000  # text blocks longer than this are split at sentence boundaries
 HEADING_SIZE_RATIO = 1.2  # heading font must be this much larger than the page's body text
@@ -39,6 +38,30 @@ NUMBERED_HEADING = re.compile(r"^(?:\d+(?:\.\d+)*\.?|[IVXLC]+\.|[A-Z]\.)\s+\S")
 
 class ProcessingError(Exception):
     """A permanent problem with the document itself. The message is safe to show users."""
+
+
+class ProcessingLimitError(ProcessingError):
+    """The document exceeds a configured resource limit (pages, text, table cells, facts)."""
+
+
+@dataclass
+class _Budget:
+    """What the rest of the document may still consume. None = unlimited."""
+
+    text_bytes: int | None
+    table_cells: int | None
+
+    def spend_text(self, size: int) -> None:
+        if self.text_bytes is not None:
+            self.text_bytes -= size
+            if self.text_bytes < 0:
+                raise ProcessingLimitError("The document exceeds the extracted-text limit.")
+
+    def spend_cells(self, cells: int) -> None:
+        if self.table_cells is not None:
+            self.table_cells -= cells
+            if self.table_cells < 0:
+                raise ProcessingLimitError("The document exceeds the table-size limit.")
 
 
 @dataclass(frozen=True)
@@ -96,20 +119,32 @@ class Chunk:
 # --- Parsing -----------------------------------------------------------------------------
 
 
-def parse_pdf(path: Path) -> list[ParsedPage]:
+def parse_pdf(
+    path: Path,
+    *,
+    max_pages: int | None = None,
+    max_text_bytes: int | None = None,
+    max_table_cells: int | None = None,
+) -> list[ParsedPage]:
+    """Parse a PDF within limits (None = unlimited). Run untrusted files via app/sandbox.py."""
     try:
         doc = pymupdf.open(path)
     except Exception:
         raise ProcessingError("The PDF could not be read. It may be damaged.") from None
+    budget = _Budget(max_text_bytes, max_table_cells)
     with doc:
         if doc.needs_pass:
             raise ProcessingError("The PDF is password-protected.")
         if doc.page_count == 0:
             raise ProcessingError("The PDF has no pages.")
-        if doc.page_count > MAX_PAGES:
-            raise ProcessingError(f"The PDF has more than {MAX_PAGES} pages.")
+        if max_pages is not None and doc.page_count > max_pages:
+            raise ProcessingLimitError(f"The PDF has more than {max_pages} pages.")
         # Pages load one at a time; only extracted text is kept.
-        pages = [_parse_page(doc, i) for i in range(doc.page_count)]
+        pages = []
+        for i in range(doc.page_count):
+            page = _parse_page(doc, i, budget)
+            budget.spend_text(len(page.text.encode()))
+            pages.append(page)
     if not any(p.blocks for p in pages):
         raise ProcessingError(
             "No extractable text was found. Scanned PDFs need OCR, which is not supported yet."
@@ -117,11 +152,11 @@ def parse_pdf(path: Path) -> list[ParsedPage]:
     return pages
 
 
-def _parse_page(doc: pymupdf.Document, index: int) -> ParsedPage:
+def _parse_page(doc: pymupdf.Document, index: int, budget: _Budget) -> ParsedPage:
     number = index + 1
     try:
         page = doc.load_page(index)
-        blocks = _extract_blocks(page)
+        blocks = _extract_blocks(page, budget)
         has_images = bool(page.get_images())
         metadata = {
             "label": page.get_label() or None,
@@ -131,6 +166,8 @@ def _parse_page(doc: pymupdf.Document, index: int) -> ParsedPage:
             "has_images": has_images,
             "table_count": sum(b.kind == "table" for b in blocks),
         }
+    except ProcessingLimitError:
+        raise
     except Exception:
         log.exception("page extraction failed", extra={"fields": {"page_number": number}})
         return ParsedPage(number, [], "failed", {})
@@ -143,11 +180,13 @@ def _clean(text: str) -> str:
     return " ".join(text.replace("\x00", "").split())  # Postgres TEXT rejects NUL
 
 
-def _extract_blocks(page: pymupdf.Page) -> list[Block]:
+def _extract_blocks(page: pymupdf.Page, budget: _Budget) -> list[Block]:
     try:
         tables = page.find_tables().tables
     except Exception:
         tables = []  # table detection is best-effort; text is still extracted
+    for table in tables:  # before extracting any cell text
+        budget.spend_cells(table.row_count * table.col_count)
     table_rects = [pymupdf.Rect(t.bbox) for t in tables]
 
     # Stream (authoring) order, not geometric sort: keeps multi-column text in column order.

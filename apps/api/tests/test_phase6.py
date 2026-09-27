@@ -21,7 +21,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.auth import sign
+from app.auth import start_session, token_for
 from app.db import Base, get_session
 from app.extraction import METRICS
 from app.main import app
@@ -90,18 +90,22 @@ def user_b(db_session):
 def client_a(db_session, user_a):
     app.dependency_overrides[get_session] = lambda: db_session
     c = TestClient(app)
-    c.headers.update({"Authorization": f"Bearer {sign(user_a.id)}"})
+    token = token_for(start_session(db_session, user_a.id))
+    db_session.commit()
+    c.headers.update({"Authorization": f"Bearer {token}"})
     yield c
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_session, None)  # keep the session-wide storage override
 
 
 @pytest.fixture
 def client_b(db_session, user_b):
     app.dependency_overrides[get_session] = lambda: db_session
     c = TestClient(app)
-    c.headers.update({"Authorization": f"Bearer {sign(user_b.id)}"})
+    token = token_for(start_session(db_session, user_b.id))
+    db_session.commit()
+    c.headers.update({"Authorization": f"Bearer {token}"})
     yield c
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_session, None)  # keep the session-wide storage override
 
 
 def seed_document(
@@ -359,9 +363,7 @@ def test_review_queue_filters(client_a, db_session, user_a):
     doc, facts = seed_document(db_session, user_a, "AR.pdf", 2024)
 
     # Add a fact needing review with low confidence
-    m_debt = db_session.scalar(
-        select(FinancialMetric).where(FinancialMetric.key == "total_debt")
-    )
+    m_debt = db_session.scalar(select(FinancialMetric).where(FinancialMetric.key == "total_debt"))
     p = db_session.scalar(select(DocumentPage).where(DocumentPage.document_id == doc.id))
     s = db_session.scalar(select(DocumentSection).where(DocumentSection.document_id == doc.id))
 

@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.analytics import CONTEXT
 from app.audit import record_audit_event
-from app.auth import CurrentUserId
+from app.auth import CurrentUserId, limit_user
 from app.documents import (
     DbSession,
     FactOut,
@@ -279,7 +279,7 @@ def detect_document_anomalies(
     return detected
 
 
-@router.get("", response_model=DataQualityResponse)
+@router.get("", response_model=DataQualityResponse, dependencies=[limit_user("compute")])
 def get_data_quality(
     user_id: CurrentUserId,
     session: DbSession,

@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, or_, select
@@ -17,10 +17,11 @@ from sqlalchemy.orm import Session
 
 from app import exports
 from app.analytics import FORMULAS, FactInput, Result
-from app.auth import CurrentUserId
+from app.auth import CurrentUserId, limit_user
 from app.config import get_settings
 from app.documents import DbSession, DecimalStr, FactOut, _facts, _owned_document
 from app.errors import ApiError
+from app.logs import security_event
 from app.models import Document, DocumentStatus, PeriodType
 from app.workspace import METRIC_NAMES, TIMELINE_METRICS, SourceFact, build
 
@@ -136,17 +137,27 @@ def _scope_documents(
     """The document alone, or every READY report of the same company owned by the same user."""
     if scope == "document" or not document.company_name:
         return [document]
-    return list(
+    cap = get_settings().financials_max_documents
+    documents = list(
         session.scalars(
             select(Document)
             .where(
-                Document.user_id == user_id,
+                Document.user_id == user_id,  # ownership before any company-scoped query
                 func.lower(Document.company_name) == document.company_name.lower(),
                 or_(Document.id == document.id, Document.status == DocumentStatus.READY),
             )
             .order_by(Document.fiscal_year, Document.created_at)
+            .limit(cap + 1)
         )
     )
+    if len(documents) > cap:
+        security_event("financial_data_limit_exceeded", documents=len(documents), limit=cap)
+        raise ApiError(
+            413,
+            "financial_data_too_large",
+            f"This company has more than {cap} reports. Open them individually.",
+        )
+    return documents
 
 
 def load_financials(
@@ -220,7 +231,7 @@ def load_financials(
     )
 
 
-@router.get("/{document_id}/financials")
+@router.get("/{document_id}/financials", dependencies=[limit_user("financials")])
 def get_financials(
     document_id: uuid.UUID,
     user_id: CurrentUserId,
@@ -237,14 +248,25 @@ def get_evidence(
 ) -> EvidenceView:
     """One fact and its source, for the evidence explorer's deep link."""
     document = _owned_document(session, user_id, document_id)
-    fact = next((f for f in _facts(session, document_id) if f.evidence.id == evidence_id), None)
+    fact = next(iter(_facts(session, document_id, evidence_id=evidence_id, limit=1)), None)
     if fact is None:
         raise ApiError(404, "not_found", "Evidence not found")
     return EvidenceView(document=DocumentRef.model_validate(document), fact=fact)
 
 
-@router.get("/{document_id}/export")
+def _too_large(request: Request, reason: str, size: int, limit: int) -> ApiError:
+    security_event("export_limit_exceeded", request, reason=reason, size=size, limit=limit)
+    return ApiError(
+        413,
+        "export_too_large",
+        "Export exceeds the maximum allowed size. Select fewer periods or metrics; larger "
+        "exports need asynchronous processing, which is not available yet.",
+    )
+
+
+@router.get("/{document_id}/export", dependencies=[limit_user("export")])
 def export_financials(
+    request: Request,
     document_id: uuid.UUID,
     user_id: CurrentUserId,
     session: DbSession,
@@ -254,9 +276,16 @@ def export_financials(
     metrics: Annotated[list[str] | None, Query()] = None,
 ) -> Response:
     """Facts, calculations, evidence and reconciliation, filtered, as CSV, JSON or XLSX."""
-    view = load_financials(session, user_id, document_id, scope)
+    settings = get_settings()
+    view = load_financials(session, user_id, document_id, scope)  # ownership checked here
     tables = exports.tables(view, set(periods or []), set(metrics or []))
+    # Bounded before serializing: never build an oversized file, never silently truncate one.
+    records = sum(len(rows) for _, rows in tables.values())
+    if records > settings.export_max_records:
+        raise _too_large(request, "records", records, settings.export_max_records)
     body, media_type = exports.serialize(tables, view, format, datetime.now(UTC))
+    if len(body) > settings.export_max_bytes:
+        raise _too_large(request, "bytes", len(body), settings.export_max_bytes)
     stem = view.company_name if view.scope == "company" else view.documents[0].filename
     name = f"prospect-{(stem or 'export').rsplit('.pdf', 1)[0]}.{format}"
     safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in name)

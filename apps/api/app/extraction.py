@@ -515,7 +515,10 @@ def _rows(block: Block) -> list[tuple[int, list[str]]]:
 
 
 def extract_candidates(
-    pages: list[ParsedPage], sections: list[Section], assignment: dict[tuple[int, int], int]
+    pages: list[ParsedPage],
+    sections: list[Section],
+    assignment: dict[tuple[int, int], int],
+    max_row_chars: int | None = None,
 ) -> tuple[list[Candidate], list[Rejection]]:
     statement_sections = {
         s.ordinal for s in sections if s.title and KNOWN_HEADING.match(" ".join(s.title.split()))
@@ -533,8 +536,11 @@ def extract_candidates(
         header_text = ""
         for block in page.blocks:
             columns: dict[int, Header] = {}  # table column → header, for this table only
+            lines = block.text.split("\n")  # once per block, not once per row
             for row_index, cells in _rows(block):
-                source = block.text.split("\n")[row_index]
+                source = lines[row_index]
+                if max_row_chars is not None and len(source) > max_row_chars:
+                    continue  # not a statement row; too long to be useful evidence
                 metric = match_metric(cells[0]) if cells[0] else None
                 if metric is None:
                     if block.kind == "table":
@@ -735,7 +741,8 @@ def extract_facts(
     sections: list[Section],
     assignment: dict[tuple[int, int], int],
     chunks: list[Chunk],
+    max_row_chars: int | None = None,
 ) -> tuple[list[Fact], list[Rejection]]:
-    candidates, rejected = extract_candidates(pages, sections, assignment)
+    candidates, rejected = extract_candidates(pages, sections, assignment, max_row_chars)
     facts, more = build_facts(candidates, pages, chunks, assignment)
     return facts, rejected + more

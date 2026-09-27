@@ -10,6 +10,17 @@ for key, value in {
     "OBJECT_STORAGE_ACCESS_KEY": "test-access-key",
     "OBJECT_STORAGE_SECRET_KEY": "test-secret-key",
     "APP_SECRET": "test-app-secret",
+    "ENVIRONMENT": "development",
+    # The suite creates many sessions and uploads; security tests lower these one at a time.
+    "RATE_LIMIT_SESSIONS": "100000/60",
+    "RATE_LIMIT_SESSION_REFRESH": "100000/60",
+    "RATE_LIMIT_UPLOADS": "100000/60",
+    "RATE_LIMIT_COMPLETE": "100000/60",
+    "RATE_LIMIT_FINANCIALS": "100000/60",
+    "RATE_LIMIT_COMPUTE": "100000/60",
+    "RATE_LIMIT_EXPORT": "100000/60",
+    "QUOTA_MAX_ACTIVE_JOBS": "100000",
+    "QUOTA_MAX_DAILY_JOBS": "100000",
 }.items():
     os.environ.setdefault(key, value)
 

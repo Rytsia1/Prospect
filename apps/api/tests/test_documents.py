@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from app.config import get_settings
 from app.db import SessionLocal
 from app.main import app
-from app.models import Document, ProcessingJob, User
+from app.models import Document, ProcessingJob, User, UserSession
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TEST_DATABASE_URL"), reason="TEST_DATABASE_URL not set"
@@ -138,7 +138,7 @@ def test_server_verifies_stored_bytes(storage, data, declared):
     document = client.get(f"/api/v1/documents/{doc_id}", headers=me).json()
     assert document["status"] == "FAILED"
     assert document["processing_error"]
-    assert storage.size(storage_key(doc_id)) is None  # rejected bytes are deleted
+    assert storage.stat(storage_key(doc_id)) is None  # rejected bytes are deleted
     assert queued_jobs(doc_id) == 0
 
 
@@ -152,7 +152,9 @@ def test_requires_valid_session():
 
 def test_token_for_a_removed_user_is_rejected_not_a_server_error():
     headers = new_user()
-    user_id = uuid.UUID(headers["Authorization"].removeprefix("Bearer ").split(".")[0])
+    session_id = uuid.UUID(headers["Authorization"].removeprefix("Bearer ").split(".")[1])
+    with SessionLocal() as s:
+        user_id = s.get_one(UserSession, session_id).user_id
     with SessionLocal() as s, s.begin():
         s.delete(s.get_one(User, user_id))
     response = create(headers)

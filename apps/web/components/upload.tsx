@@ -8,6 +8,7 @@ import {
   type DocumentType,
   formatBytes,
   type ProspectDocument,
+  sha256Hex,
   validatePdf,
 } from "@/lib/documents";
 
@@ -31,6 +32,7 @@ export function Upload({ onUploaded }: { onUploaded: () => void }) {
     if (invalid) return setState({ phase: "error", file, message: invalid });
     setState({ phase: "uploading", file, loaded: 0 });
     try {
+      const sha256 = await sha256Hex(await file.arrayBuffer());
       const created = await api<DocumentUpload>("/documents", {
         method: "POST",
         body: JSON.stringify({
@@ -40,6 +42,7 @@ export function Upload({ onUploaded }: { onUploaded: () => void }) {
           document_type: documentType,
           fiscal_year: fiscalYear ? Number(fiscalYear) : null,
           company_name: company.trim() || null,
+          sha256,
         }),
       });
       onUploaded(); // show the UPLOADING row in the list right away

@@ -10,16 +10,18 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Request
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app import quotas
 from app.analytics import FORMULAS, INPUT_ORDER, METRIC_ORDER
-from app.auth import CurrentUserId
+from app.auth import CurrentUserId, limit_user
 from app.config import get_settings
 from app.db import get_session
 from app.errors import ApiError
+from app.logs import security_event
 from app.models import (
     Calculation,
     CalculationInput,
@@ -45,7 +47,6 @@ from app.storage import ObjectStorage, get_storage
 PDF_MIME = "application/pdf"
 PDF_MAGIC = b"%PDF-"
 PDF_HEADER_WINDOW = 1024  # PDF readers accept the header anywhere in the first 1 KiB
-SIGNED_URL_TTL_SECONDS = 900
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 DbSession = Annotated[Session, Depends(get_session)]
@@ -67,6 +68,8 @@ class DocumentCreate(BaseModel):
     document_type: DocumentType = DocumentType.ANNUAL_REPORT
     fiscal_year: int | None = Field(default=None, ge=1900, le=2200)
     company_name: CompanyName = None
+    # SHA-256 of the file (hex). The worker refuses to process bytes that do not match.
+    sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class DocumentUpdate(BaseModel):
@@ -183,6 +186,7 @@ class FactOut(BaseModel):
 
 class FactList(BaseModel):
     items: list[FactOut]
+    next_offset: int | None = None  # pass as `offset` for the next page; null on the last page
 
 
 class CalculationOut(BaseModel):
@@ -207,7 +211,7 @@ class CalculationList(BaseModel):
 
 
 def _expires_at() -> datetime:
-    return datetime.now(UTC) + timedelta(seconds=SIGNED_URL_TTL_SECONDS)
+    return datetime.now(UTC) + timedelta(seconds=get_settings().signed_url_ttl_seconds)
 
 
 def _owned_document(
@@ -217,28 +221,39 @@ def _owned_document(
     query = select(Document).where(Document.id == document_id, Document.user_id == user_id)
     document = session.scalar(query.with_for_update() if lock else query)
     if document is None:
+        if session.scalar(select(Document.id).where(Document.id == document_id)):
+            security_event(
+                "authorization_denied", user_id=str(user_id), document_id=str(document_id)
+            )
         raise ApiError(404, "not_found", "Document not found")
     return document
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[limit_user("uploads")])
 def create_document(
-    body: DocumentCreate, user_id: CurrentUserId, session: DbSession, storage: Storage
+    request: Request,
+    body: DocumentCreate,
+    user_id: CurrentUserId,
+    session: DbSession,
+    storage: Storage,
 ) -> DocumentUpload:
+    settings = get_settings()
     if body.content_type != PDF_MIME:
         raise ApiError(415, "unsupported_file_type", "Only PDF files are supported")
-    limit = get_settings().max_upload_bytes
-    if body.size_bytes > limit:
-        raise ApiError(413, "file_too_large", f"File exceeds the {limit // (1024 * 1024)} MB limit")
+    if body.size_bytes > settings.max_upload_bytes:
+        security_event("upload_rejected_size", request, declared_bytes=body.size_bytes)
+        raise ApiError(413, "file_too_large", "Upload exceeds the maximum allowed size.")
+    quotas.check_upload(request, session, user_id, body.size_bytes)  # locks the user row
 
     document = Document(
         user_id=user_id,
-        filename=body.filename,
+        filename=body.filename,  # display only: never used as a path or storage key
         document_type=body.document_type,
         fiscal_year=body.fiscal_year,
         company_name=body.company_name,
         mime_type=PDF_MIME,
         size_bytes=body.size_bytes,
+        sha256=body.sha256,
         # Random, owner-independent key; the bucket is private and only signed URLs reach it.
         storage_key=f"documents/{secrets.token_urlsafe(24)}.pdf",
     )
@@ -247,38 +262,60 @@ def create_document(
     return DocumentUpload(
         document=DocumentOut.model_validate(document),
         upload=SignedUpload(
-            url=storage.signed_url(document.storage_key, "put", SIGNED_URL_TTL_SECONDS),
+            # Signed for exactly size_bytes of application/pdf: storage rejects anything else.
+            url=storage.signed_upload_url(
+                document.storage_key, PDF_MIME, body.size_bytes, settings.signed_url_ttl_seconds
+            ),
             headers={"Content-Type": PDF_MIME},
             expires_at=_expires_at(),
         ),
     )
 
 
-@router.post("/{document_id}/complete")
+def _reject_upload(
+    session: Session, storage: ObjectStorage, document: Document, problem: str
+) -> ApiError:
+    storage.delete(document.storage_key)
+    document.status = DocumentStatus.FAILED
+    document.processing_error = problem
+    document.object_deleted_at = datetime.now(UTC)
+    session.commit()
+    return ApiError(422, "invalid_upload", problem)
+
+
+@router.post("/{document_id}/complete", dependencies=[limit_user("complete")])
 def complete_upload(
-    document_id: uuid.UUID, user_id: CurrentUserId, session: DbSession, storage: Storage
+    request: Request,
+    document_id: uuid.UUID,
+    user_id: CurrentUserId,
+    session: DbSession,
+    storage: Storage,
 ) -> DocumentOut:
     document = _owned_document(session, user_id, document_id, lock=True)
     if document.status != DocumentStatus.UPLOADING:
         return DocumentOut.model_validate(document)  # idempotent: already completed or failed
 
-    size = storage.size(document.storage_key)
-    if size is None:
+    stored = storage.stat(document.storage_key)
+    if stored is None:
         raise ApiError(409, "upload_not_found", "The file has not been uploaded yet")
 
-    # Never trust the client: check the stored bytes, not the declared type.
-    problem = None
-    if size != document.size_bytes:
-        problem = "Uploaded file size does not match the selected file."
-    elif PDF_MAGIC not in storage.read_prefix(document.storage_key, PDF_HEADER_WINDOW):
-        problem = "The file is not a valid PDF."
-    if problem:
-        storage.delete(document.storage_key)
-        document.status = DocumentStatus.FAILED
-        document.processing_error = problem
-        session.commit()
-        raise ApiError(422, "invalid_upload", problem)
+    # Never trust the client: check the stored bytes, not the declared size or type.
+    if stored.size != document.size_bytes or stored.size > get_settings().max_upload_bytes:
+        security_event(
+            "upload_rejected_size",
+            request,
+            document_id=str(document.id),
+            declared_bytes=document.size_bytes,
+            stored_bytes=stored.size,
+        )
+        raise _reject_upload(session, storage, document, "Uploaded file size does not match.")
+    if (stored.content_type or "").split(";")[0].strip() != PDF_MIME or PDF_MAGIC not in (
+        storage.read_prefix(document.storage_key, PDF_HEADER_WINDOW)
+    ):
+        security_event("upload_rejected_type", request, document_id=str(document.id))
+        raise _reject_upload(session, storage, document, "The file is not a valid PDF.")
 
+    quotas.check_processing(request, session, user_id)  # before queueing any work
     document.status = DocumentStatus.UPLOADED
     session.add(ProcessingJob(document_id=document.id))
     session.commit()
@@ -322,7 +359,9 @@ def get_download_url(
     if document.status in (DocumentStatus.UPLOADING, DocumentStatus.FAILED):
         raise ApiError(409, "file_unavailable", "The file is not available")
     return SignedDownload(
-        url=storage.signed_url(document.storage_key, "get", SIGNED_URL_TTL_SECONDS),
+        url=storage.signed_download_url(
+            document.storage_key, get_settings().signed_url_ttl_seconds
+        ),
         expires_at=_expires_at(),
     )
 
@@ -387,17 +426,56 @@ def list_sections(
     return SectionList(items=[SectionOut.model_validate(s) for s in sections])
 
 
-def _facts(session: Session, *document_ids: uuid.UUID) -> list[FactOut]:
-    """The documents' facts with evidence; callers must have checked ownership of every id."""
-    rows = session.execute(
-        select(FinancialFact, FinancialMetric, Evidence, DocumentPage, SectionRow)
+def _facts(
+    session: Session,
+    *document_ids: uuid.UUID,
+    evidence_id: uuid.UUID | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[FactOut]:
+    """The documents' facts with evidence; callers must have checked ownership of every id.
+
+    Only the page label is read from each page (not its text), and paging happens in SQL.
+    """
+    query = (
+        select(
+            FinancialFact,
+            FinancialMetric,
+            Evidence,
+            DocumentPage.page_metadata["label"].astext,
+            SectionRow.title,
+        )
         .join(FinancialMetric, FinancialMetric.id == FinancialFact.metric_id)
         .join(Evidence, Evidence.id == FinancialFact.evidence_id)
         .join(DocumentPage, DocumentPage.id == Evidence.page_id)
         .join(SectionRow, SectionRow.id == Evidence.section_id)
         .where(FinancialFact.document_id.in_(document_ids))
-        .order_by(FinancialMetric.category, FinancialMetric.key, FinancialFact.fiscal_year.desc())
+        .order_by(
+            FinancialMetric.category,
+            FinancialMetric.key,
+            FinancialFact.fiscal_year.desc(),
+            FinancialFact.id,  # stable order, so pages never skip or repeat a fact
+        )
+        .offset(offset)
+        .limit(limit)
     )
+    if evidence_id is not None:
+        query = query.where(Evidence.id == evidence_id)
+    if limit is None:  # an unpaged load: refuse, before loading, sets too large to hold
+        cap = get_settings().financials_max_facts
+        total = session.scalar(
+            select(func.count())
+            .select_from(FinancialFact)
+            .where(FinancialFact.document_id.in_(document_ids))
+        )
+        if (total or 0) > cap:
+            security_event("financial_data_limit_exceeded", facts=total, limit=cap)
+            raise ApiError(
+                413,
+                "financial_data_too_large",
+                "Too much financial data to load at once. Narrow the scope.",
+            )
+    rows = session.execute(query)
     return [
         FactOut(
             id=fact.id,
@@ -419,8 +497,8 @@ def _facts(session: Session, *document_ids: uuid.UUID) -> list[FactOut]:
             evidence=EvidenceOut(
                 id=evidence.id,
                 page_number=evidence.page_number,
-                page_label=page.page_metadata.get("label"),
-                section_title=section.title,
+                page_label=page_label,
+                section_title=section_title,
                 chunk_id=evidence.chunk_id,
                 kind=evidence.evidence_type.value,
                 content=evidence.content,
@@ -428,15 +506,26 @@ def _facts(session: Session, *document_ids: uuid.UUID) -> list[FactOut]:
                 unit=evidence.locator.get("unit"),
             ),
         )
-        for fact, metric, evidence, page, section in rows
+        for fact, metric, evidence, page_label, section_title in rows
     ]
 
 
+_PAGE = get_settings()
+
+
 @router.get("/{document_id}/metrics")
-def list_facts(document_id: uuid.UUID, user_id: CurrentUserId, session: DbSession) -> FactList:
-    """Extracted financial facts with their evidence. needs_review items are not facts."""
+def list_facts(
+    document_id: uuid.UUID,
+    user_id: CurrentUserId,
+    session: DbSession,
+    limit: Annotated[int, Query(ge=1, le=_PAGE.page_max_limit)] = _PAGE.page_default_limit,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> FactList:
+    """Extracted financial facts with their evidence, one page at a time (PAGE_MAX_LIMIT)."""
     _owned_document(session, user_id, document_id)
-    return FactList(items=_facts(session, document_id))
+    items = _facts(session, document_id, limit=limit + 1, offset=offset)
+    more = len(items) > limit
+    return FactList(items=items[:limit], next_offset=offset + limit if more else None)
 
 
 @router.get("/{document_id}/calculations")

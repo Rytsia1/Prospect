@@ -54,12 +54,16 @@ Deploy FastAPI to Railway or Render.
 Configure:
 
 ```text
+ENVIRONMENT=production
 DATABASE_URL
 OBJECT_STORAGE_*
 LLM_API_KEY
-APP_SECRET
+APP_SECRET          # ≥ 32 random bytes; startup fails on a weak or placeholder value
 CORS_ORIGINS
+FORWARDED_ALLOW_IPS # "*" only if the API is reachable solely through the platform proxy
 ```
+
+Limits, quotas and rate limits have safe defaults; see docs/SECURITY.md to tune them.
 
 Deploy migrations.
 
@@ -195,6 +199,8 @@ Vercel preview deployments can be used for frontend changes.
 - [ ] migrations applied
 - [ ] CORS configured
 - [ ] secrets configured
+- [ ] `ENVIRONMENT=production` and a generated `APP_SECRET` (startup refuses weak secrets)
+- [ ] rate limits answer 429 with `Retry-After` (docs/SECURITY.md §6)
 - [ ] logs available
 
 ### Worker
@@ -204,6 +210,7 @@ Vercel preview deployments can be used for frontend changes.
 - [ ] can access object storage
 - [ ] processes test PDF
 - [ ] failure state works
+- [ ] service memory limit set (second boundary around the parser child processes)
 
 ### Database
 

@@ -17,18 +17,42 @@ paths:
   /sessions:
     post:
       summary: Start an anonymous single-user-mode session (replaced by real auth later)
+      description: >
+        Token format v1.<session_id>.<issued_at>.<expires_at>.<hmac>. Rejected (401) when
+        malformed, badly signed, expired, revoked or unknown. Rate limited per client IP.
+        See docs/SECURITY.md.
       security: []
       responses:
         "201":
-          description: Signed session token for the Authorization header
+          description: Signed, expiring session token for the Authorization header
           content:
             application/json:
               schema:
-                type: object
-                required: [token]
-                properties:
-                  token:
-                    type: string
+                $ref: "#/components/schemas/SessionToken"
+        "429":
+          description: Rate limited; Retry-After gives the seconds to wait
+
+  /sessions/refresh:
+    post:
+      summary: Exchange a valid token for a fresh one (same user); revokes the old session
+      responses:
+        "200":
+          description: New session token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionToken"
+        "401":
+          description: Missing, malformed, expired, revoked or unknown session
+        "429":
+          description: Rate limited (Retry-After header)
+
+  /sessions/current:
+    delete:
+      summary: Revoke the current session (sign out); the token is rejected from now on
+      responses:
+        "204":
+          description: Revoked
 
   /documents:
     post:
@@ -276,12 +300,30 @@ paths:
 
   /documents/{documentId}/metrics:
     get:
-      summary: Get extracted financial facts with their evidence
+      summary: Get extracted financial facts with their evidence (paged)
       description: >
+        Paged in the database: limit (default 100, at most 500; larger is 422) and offset;
+        next_offset is null on the last page.
+        Rate limits (429 + Retry-After), quotas (409/429 quota_exceeded) and size limits
+        (413 file_too_large, financial_data_too_large, export_too_large) apply across the API;
+        see docs/SECURITY.md.
         Items with status needs_review are kept for audit and must not be presented as facts.
         Monetary values are decimal strings in full currency units, never JSON numbers.
       parameters:
         - $ref: "#/components/parameters/DocumentId"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
       responses:
         "200":
           description: Financial facts
@@ -1104,6 +1146,16 @@ components:
               type: string
               nullable: true
 
+    SessionToken:
+      type: object
+      required: [token, expires_at]
+      properties:
+        token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
     DocumentRef:
       type: object
       required: [id, filename]
@@ -1392,6 +1444,10 @@ components:
           maxLength: 200
           nullable: true
           description: Groups the user's reports into one company workspace
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: SHA-256 of the file; the worker refuses stored bytes that do not match
 
     DocumentUpload:
       type: object

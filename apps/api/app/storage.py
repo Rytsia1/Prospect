@@ -1,8 +1,9 @@
 """Private object storage. The rest of the app depends on `ObjectStorage`, never on boto3."""
 
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Protocol
 
 import boto3
 from botocore.config import Config
@@ -10,7 +11,11 @@ from botocore.exceptions import ClientError
 
 from app.config import get_settings
 
-SignedUrlMethod = Literal["get", "put"]
+
+@dataclass(frozen=True)
+class ObjectStat:
+    size: int
+    content_type: str | None
 
 
 class ObjectStorage(Protocol):
@@ -18,9 +23,12 @@ class ObjectStorage(Protocol):
     def download(self, key: str) -> bytes: ...
     def download_file(self, key: str, path: Path) -> None: ...
     def delete(self, key: str) -> None: ...
-    def size(self, key: str) -> int | None: ...
+    def stat(self, key: str) -> ObjectStat | None: ...
     def read_prefix(self, key: str, length: int) -> bytes: ...
-    def signed_url(self, key: str, method: SignedUrlMethod, expires_in: int = 900) -> str: ...
+    def signed_download_url(self, key: str, expires_in: int) -> str: ...
+    def signed_upload_url(
+        self, key: str, content_type: str, content_length: int, expires_in: int
+    ) -> str: ...
 
 
 class S3ObjectStorage:
@@ -50,10 +58,11 @@ class S3ObjectStorage:
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)
 
-    def size(self, key: str) -> int | None:
-        """Object size in bytes, or None if the object does not exist."""
+    def stat(self, key: str) -> ObjectStat | None:
+        """Stored size and content type, or None if the object does not exist."""
         try:
-            return self.client.head_object(Bucket=self.bucket, Key=key)["ContentLength"]
+            head = self.client.head_object(Bucket=self.bucket, Key=key)
+            return ObjectStat(head["ContentLength"], head.get("ContentType"))
         except ClientError as e:
             if e.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound"):
                 return None
@@ -65,10 +74,30 @@ class S3ObjectStorage:
         )
         return response["Body"].read()
 
-    def signed_url(self, key: str, method: SignedUrlMethod, expires_in: int = 900) -> str:
-        operation = {"get": "get_object", "put": "put_object"}[method]
+    def signed_download_url(self, key: str, expires_in: int) -> str:
         return self.client.generate_presigned_url(
-            operation, Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=expires_in
+            "get_object", Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=expires_in
+        )
+
+    def signed_upload_url(
+        self, key: str, content_type: str, content_length: int, expires_in: int
+    ) -> str:
+        """A PUT URL whose signature covers Content-Length and Content-Type.
+
+        The storage service recomputes the signature from the request's actual headers, so a
+        body of any other length (or another type) is rejected by storage itself, before the
+        application sees it. The API only signs lengths within MAX_UPLOAD_BYTES. (Works on R2,
+        which does not support presigned POST policies with content-length-range.)
+        """
+        return self.client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": self.bucket,
+                "Key": key,
+                "ContentType": content_type,
+                "ContentLength": content_length,
+            },
+            ExpiresIn=expires_in,
         )
 
 

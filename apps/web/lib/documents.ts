@@ -230,3 +230,9 @@ export function formatRatio(value: string, unit: Calculation["unit"], signed = f
     unit === "percent" ? `${roundDecimal(value, 2, 2)}%` : `${roundDecimal(value, 0, 2)}x`;
   return signed && !text.startsWith("−") && !/^0\.00/.test(text) ? `+${text}` : text;
 }
+
+/** Hex SHA-256 of the file, sent with the upload so the server can verify the stored bytes. */
+export async function sha256Hex(data: ArrayBuffer): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+}

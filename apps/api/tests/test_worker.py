@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sample_pdf import build_sample_report
 from sqlalchemy import func, select, update
 
+from app.config import get_settings
 from app.db import SessionLocal
 from app.main import app
 from app.models import (
@@ -22,7 +23,9 @@ from app.models import (
     ProcessingJob,
     User,
 )
-from app.worker import MAX_ATTEMPTS, process_next
+from app.worker import process_next
+
+MAX_ATTEMPTS = get_settings().processing_max_attempts
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TEST_DATABASE_URL"), reason="TEST_DATABASE_URL not set"
@@ -174,9 +177,13 @@ def test_transient_errors_are_retried_with_backoff(storage, report_bytes):
     doc, job = state(doc_id)
     assert doc.status == DocumentStatus.QUEUED  # waiting to retry, not stuck in PROCESSING
     assert job.status == JobStatus.QUEUED and job.attempts == 1
+    # Exponential backoff with jitter: base (30 s) × 2^0 × [1, 1.5).
+    assert job.run_after is not None
+    delay = (job.run_after - datetime.now(UTC)).total_seconds()
+    assert 25 < delay <= 45
     assert process_next(flaky) is False  # backoff not elapsed yet
 
-    age_job(doc_id, updated_at=datetime.now(UTC) - timedelta(minutes=5))
+    age_job(doc_id, run_after=datetime.now(UTC) - timedelta(seconds=1))
     assert process_next(flaky) is True
     doc, job = state(doc_id)
     assert doc.status == DocumentStatus.READY and job.attempts == 2
@@ -186,12 +193,12 @@ def test_retries_stop_after_max_attempts(storage, report_bytes):
     doc_id = uploaded_document(storage, report_bytes)
     flaky = FlakyStorage(storage, failures=MAX_ATTEMPTS)
     for _ in range(MAX_ATTEMPTS):
-        age_job(doc_id, updated_at=datetime.now(UTC) - timedelta(hours=1))
+        age_job(doc_id, run_after=datetime.now(UTC) - timedelta(seconds=1))
         assert process_next(flaky) is True
 
     doc, job = state(doc_id)
     assert doc.status == DocumentStatus.FAILED
-    assert f"Tried {MAX_ATTEMPTS} times" in (doc.processing_error or "")
+    assert doc.processing_error == "Document processing failed."  # generic, user-safe
     assert "storage unavailable" not in (doc.processing_error or "")  # internals stay in logs
     assert job.status == JobStatus.FAILED and job.attempts == MAX_ATTEMPTS
 
@@ -219,7 +226,15 @@ def test_repeatedly_crashing_job_is_failed_not_left_processing(storage, report_b
 
 def session_headers() -> tuple[dict[str, str], uuid.UUID]:
     token = client.post("/api/v1/sessions").json()["token"]
-    return {"Authorization": f"Bearer {token}"}, uuid.UUID(token.split(".")[0])
+    return {"Authorization": f"Bearer {token}"}, user_of(token)
+
+
+def user_of(token: str) -> uuid.UUID:
+    """The user behind a session token (tokens carry the session id, not the user id)."""
+    from app.models import UserSession
+
+    with SessionLocal() as s:
+        return s.get_one(UserSession, uuid.UUID(token.split(".")[1])).user_id
 
 
 def test_viewer_api_serves_pages_and_sections_to_owner_only(storage, report_bytes):

@@ -1,6 +1,7 @@
 import logging
 import time
 import uuid
+from collections.abc import Mapping
 from http import HTTPStatus
 
 from fastapi import FastAPI, Request
@@ -59,13 +60,22 @@ class ErrorResponse(BaseModel):
     error: ErrorBody
 
 
-def _error(request: Request, status: int, code: str, message: str, details=None) -> JSONResponse:
+def _error(
+    request: Request,
+    status: int,
+    code: str,
+    message: str,
+    details=None,
+    headers: Mapping[str, str] | None = None,
+) -> JSONResponse:
     request_id = getattr(request.state, "request_id", "")
     body = ErrorResponse(
         error=ErrorBody(code=code, message=message, request_id=request_id, details=details)
     )
     return JSONResponse(
-        body.model_dump(exclude_none=True), status_code=status, headers={"X-Request-ID": request_id}
+        body.model_dump(exclude_none=True),
+        status_code=status,
+        headers={"X-Request-ID": request_id, **(headers or {})},
     )
 
 
@@ -74,7 +84,7 @@ async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
     code = getattr(exc, "code", None) or HTTPStatus(exc.status_code).phrase.lower().replace(
         " ", "_"
     )
-    return _error(request, exc.status_code, code, str(exc.detail))
+    return _error(request, exc.status_code, code, str(exc.detail), headers=exc.headers)
 
 
 @app.exception_handler(RequestValidationError)
@@ -114,7 +124,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID", "Content-Disposition"],  # export filenames
+    # Content-Disposition: export filenames. Retry-After: when a rate limit resets.
+    expose_headers=["X-Request-ID", "Content-Disposition", "Retry-After"],
 )
 
 

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.analytics import CONTEXT
 from app.audit import record_audit_event
-from app.auth import CurrentUserId
+from app.auth import CurrentUserId, limit_user
 from app.documents import (
     DbSession,
     DecimalStr,
@@ -202,7 +202,9 @@ def _compute_scenario(
     return scenario_revenue, scenario_net_margin, scenario_net_income
 
 
-@router.post("/calculate", response_model=ScenarioCalculationPreview)
+@router.post(
+    "/calculate", response_model=ScenarioCalculationPreview, dependencies=[limit_user("compute")]
+)
 def calculate_scenario_preview(
     body: ScenarioCalculateRequest,
     user_id: CurrentUserId,

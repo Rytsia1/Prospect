@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.analytics import CONTEXT
 from app.audit import record_audit_event
-from app.auth import CurrentUserId
+from app.auth import CurrentUserId, limit_user
 from app.documents import (
     DbSession,
     DecimalStr,
@@ -446,7 +446,7 @@ class DiffRequest(BaseModel):
     document_b_id: uuid.UUID
 
 
-@router.post("/diff", response_model=DocumentDiffResponse)
+@router.post("/diff", response_model=DocumentDiffResponse, dependencies=[limit_user("compute")])
 def compare_documents_post(
     body: DiffRequest, user_id: CurrentUserId, session: DbSession
 ) -> DocumentDiffResponse:
@@ -456,7 +456,9 @@ def compare_documents_post(
     return compute_document_diff(session, user_id, doc_a, doc_b)
 
 
-@router.get("/{document_id}/diff", response_model=DocumentDiffResponse)
+@router.get(
+    "/{document_id}/diff", response_model=DocumentDiffResponse, dependencies=[limit_user("compute")]
+)
 def compare_documents_get(
     document_id: uuid.UUID,
     user_id: CurrentUserId,

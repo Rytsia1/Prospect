@@ -79,6 +79,11 @@ uv run uvicorn app.main:app --reload    # http://localhost:8000/health
 Production start command (Railway/Render):
 `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log`
 
+Security controls (sessions, rate limits, upload limits, processing sandbox, quotas, export
+limits) and the production environment variables are described in
+[docs/SECURITY.md](docs/SECURITY.md). Set `ENVIRONMENT=production` and a strong `APP_SECRET` in
+production: the API and worker refuse to start otherwise.
+
 ## Run the Document Worker
 
 The worker turns uploaded PDFs into pages, sections, and chunks. It polls the
