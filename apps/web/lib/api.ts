@@ -71,6 +71,19 @@ export async function api<T>(path: string, init: RequestInit = {}, retried = fal
   return res.json() as Promise<T>;
 }
 
+/** Download an authenticated file (exports): the API needs the bearer token, a link cannot. */
+export async function downloadFile(path: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/v1${path}`, {
+    headers: { Authorization: `Bearer ${await sessionToken()}` },
+  }).catch(() => null);
+  if (!res?.ok) throw new ApiError(res?.status ?? 0, "download_failed", "The export failed.");
+  const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1];
+  const url = URL.createObjectURL(await res.blob());
+  const link = Object.assign(document.createElement("a"), { href: url, download: name ?? "" });
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 /** PUT a file to a signed URL, reporting real byte progress (fetch cannot report uploads). */
 export function putWithProgress(
   upload: SignedUpload,

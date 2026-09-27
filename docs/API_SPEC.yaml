@@ -133,6 +133,33 @@ paths:
               schema:
                 $ref: "#/components/schemas/Document"
 
+    patch:
+      summary: Update document metadata (company name)
+      description: >
+        The company name groups the user's reports into one company workspace (whitespace is
+        collapsed; matching is case-insensitive). null clears it.
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [company_name]
+              properties:
+                company_name:
+                  type: string
+                  maxLength: 200
+                  nullable: true
+      responses:
+        "200":
+          description: Document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+
     delete:
       summary: Delete a document
       parameters:
@@ -293,6 +320,107 @@ paths:
                     items:
                       $ref: "#/components/schemas/Calculation"
 
+  /documents/{documentId}/financials:
+    get:
+      summary: Timeline, dashboard, reconciliation and data quality
+      description: >
+        Derived on read from the canonical financial facts; nothing is stored separately.
+        scope=company combines every READY report of the same user with the same company name
+        (a document without a company is always scope=document). Periods are normalized to
+        fiscal years only when the source establishes them. A metric/period reported by several
+        documents is one value when they agree (primary source: the report whose own latest year
+        it is) and a conflict, with every source listed, when they disagree. Ratios and
+        year-over-year changes come from the deterministic calculation engine.
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum: [document, company]
+            default: document
+      responses:
+        "200":
+          description: Workspace financials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Financials"
+
+  /documents/{documentId}/evidence/{evidenceId}:
+    get:
+      summary: One fact and its source, for the evidence explorer
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - name: evidenceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The fact and its evidence
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [document, fact]
+                properties:
+                  document:
+                    $ref: "#/components/schemas/DocumentRef"
+                  fact:
+                    $ref: "#/components/schemas/FinancialFact"
+        "404":
+          description: Not found (also for evidence of another document or another user)
+
+  /documents/{documentId}/export:
+    get:
+      summary: Export facts, calculations, reconciliation and evidence
+      description: >
+        Serializes the same payload as /financials; never recalculates. Monetary values are exact
+        decimals in full currency units (CSV text, JSON strings, XLSX number cells written as exact
+        decimal text). CSV carries the facts table (with source page, section and text); JSON and
+        XLSX carry sheets Financial Facts, Calculations, Reconciliation, Evidence. Text cells that
+        start with = + - @ are prefixed with ' in CSV (formula injection).
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [csv, json, xlsx]
+            default: csv
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum: [document, company]
+            default: document
+        - name: periods
+          in: query
+          description: Normalized periods to include (repeatable); omitted means all
+          schema:
+            type: array
+            items:
+              type: string
+        - name: metrics
+          in: query
+          description: >
+            Fact metrics and/or calculation metrics (revenue_growth, net_margin, roa, roe,
+            debt_to_equity, current_ratio) and "reconciliation" (repeatable); omitted means all
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        "200":
+          description: The export file (Content-Disposition attachment)
+          content:
+            text/csv: {}
+            application/json: {}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {}
+
   /research/query:
     post:
       summary: Ask a source-grounded research question
@@ -331,6 +459,9 @@ components:
       required: [id, metric, metric_name, value, scale, original_text, period_type, period_label, confidence, status, review_reasons, extraction_method, evidence]
       properties:
         id:
+          type: string
+          format: uuid
+        document_id:
           type: string
           format: uuid
         metric:
@@ -409,6 +540,197 @@ components:
             unit:
               type: string
               nullable: true
+
+    DocumentRef:
+      type: object
+      required: [id, filename]
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        fiscal_year:
+          type: integer
+          nullable: true
+        company_name:
+          type: string
+          nullable: true
+
+    WorkspaceResult:
+      type: object
+      description: A calculation computed on read (ratio or year-over-year change)
+      required: [metric, name, formula_key, formula, period, period_type, period_label, status, value, unit, notes, input_fact_ids]
+      properties:
+        metric:
+          type: string
+        name:
+          type: string
+        formula_key:
+          type: string
+        formula:
+          type: string
+        period:
+          type: string
+          description: Normalized period (FY2025, or a balance date without an established fiscal year)
+        period_type:
+          type: string
+          enum: [annual, instant]
+        period_label:
+          type: string
+        status:
+          type: string
+          enum: [calculated, not_possible]
+        value:
+          type: string
+          nullable: true
+        unit:
+          type: string
+          enum: [percent, times]
+        reason_code:
+          type: string
+          nullable: true
+          enum: [MISSING_INPUT, DIVISION_BY_ZERO, INCOMPATIBLE_INPUTS, null]
+        reason:
+          type: string
+          nullable: true
+        notes:
+          type: array
+          items:
+            type: string
+        input_fact_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    Financials:
+      type: object
+      required: [scope, documents, metrics, periods, period_basis, facts, fact_periods, cells, calculations, reconciliations, quality]
+      properties:
+        scope:
+          type: string
+          enum: [document, company]
+        company_name:
+          type: string
+          nullable: true
+        documents:
+          type: array
+          items:
+            $ref: "#/components/schemas/DocumentRef"
+        metrics:
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+              name:
+                type: string
+        periods:
+          type: array
+          description: Oldest first
+          items:
+            type: string
+        period_basis:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [fiscal_year, fiscal_year_end, date]
+        facts:
+          type: array
+          items:
+            $ref: "#/components/schemas/FinancialFact"
+        fact_periods:
+          type: object
+          description: fact id → normalized period
+          additionalProperties:
+            type: string
+        cells:
+          type: array
+          items:
+            type: object
+            required: [metric, period, status, fact_ids]
+            properties:
+              metric:
+                type: string
+              period:
+                type: string
+              status:
+                type: string
+                enum: [value, conflict, needs_review]
+              fact_ids:
+                type: array
+                items:
+                  type: string
+                  format: uuid
+              primary_fact_id:
+                type: string
+                format: uuid
+                nullable: true
+                description: The value shown; null for conflicts and review items
+              change:
+                allOf:
+                  - $ref: "#/components/schemas/WorkspaceResult"
+                nullable: true
+        calculations:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceResult"
+        reconciliations:
+          type: array
+          items:
+            type: object
+            required: [check, formula, period, status, fact_ids, problems]
+            properties:
+              check:
+                type: string
+                enum: [balance_sheet]
+              formula:
+                type: string
+              period:
+                type: string
+              status:
+                type: string
+                enum: [BALANCED, ROUNDING_DIFFERENCE, MISMATCH, INSUFFICIENT_DATA]
+              fact_ids:
+                type: object
+                additionalProperties:
+                  type: string
+                  format: uuid
+              liabilities_plus_equity:
+                type: string
+                nullable: true
+              difference:
+                type: string
+                nullable: true
+                description: assets − (liabilities + equity)
+              tolerance:
+                type: string
+                nullable: true
+              currency:
+                type: string
+                nullable: true
+              problems:
+                type: array
+                items:
+                  type: string
+        quality:
+          type: array
+          items:
+            type: object
+            required: [period, level, message]
+            properties:
+              period:
+                type: string
+              level:
+                type: string
+                enum: [ok, warning, info]
+              message:
+                type: string
+              metric:
+                type: string
+                nullable: true
 
     Calculation:
       type: object
@@ -502,6 +824,11 @@ components:
         fiscal_year:
           type: integer
           nullable: true
+        company_name:
+          type: string
+          maxLength: 200
+          nullable: true
+          description: Groups the user's reports into one company workspace
 
     DocumentUpload:
       type: object
@@ -540,6 +867,9 @@ components:
           enum: [annual_report, financial_statement, prospectus]
         fiscal_year:
           type: integer
+          nullable: true
+        company_name:
+          type: string
           nullable: true
         mime_type:
           type: string

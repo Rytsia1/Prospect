@@ -14,6 +14,7 @@ from app.analytics import (
     FactInput,
     Result,
     calculate,
+    year_over_year,
 )
 
 T = Decimal(10) ** 12
@@ -296,3 +297,33 @@ def test_no_facts_no_calculations():
 def test_a_reported_zero_is_a_value_not_a_missing_input(value):
     facts = [fact("net_income", value, 2025), fact("revenue", 100, 2025)]
     assert one(facts, "net_margin", "FY2025").value == 0
+
+
+def test_conflicting_opening_balance_is_not_replaced_by_the_ending_variant():
+    ni, end = fact("net_income", 10, 2025), fact("total_assets", 200, FY2025)
+    disputed = fact("total_assets", 150, FY2024)
+    r = one_of(calculate([ni, end], conflicted=[disputed]), "roa", "FY2025")
+    assert (r.status, r.formula_key, r.reason_code) == (
+        "not_possible",
+        "roa_average_assets",
+        INCOMPATIBLE_INPUTS,
+    )
+
+
+def test_year_over_year_for_flows_and_balances():
+    changes = year_over_year(
+        [
+            fact("net_income", 100, 2024),
+            fact("net_income", 80, 2025),
+            fact("equity", 50, FY2024),
+            fact("equity", 60, FY2025),
+        ]
+    )
+    assert changes[("net_income", "annual", "FY2025")].value == Decimal("-0.2")
+    assert changes[("equity", "instant", "2025-12-31")].value == Decimal("0.2")
+    assert ("net_income", "annual", "FY2024") not in changes  # no earlier year: no change
+
+
+def one_of(results, metric, period_label):
+    [r] = [r for r in results if (r.metric, r.period_label) == (metric, period_label)]
+    return r

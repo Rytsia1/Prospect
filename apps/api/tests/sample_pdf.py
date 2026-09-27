@@ -50,7 +50,10 @@ def _table(page: pymupdf.Page, y: float, rows=TABLE, col_x=(72, 272, 372, 472)) 
     return y + len(rows) * row_h + 20
 
 
-def build_sample_report(path: Path) -> Path:
+def build_sample_report(
+    path: Path, table=TABLE, balance_sheet=BALANCE_SHEET, years: tuple[int, int] = (2025, 2024)
+) -> Path:
+    """The sample report; pass other rows and years to make a different year's report."""
     doc = pymupdf.open()
 
     p1 = doc.new_page()
@@ -60,8 +63,8 @@ def build_sample_report(path: Path) -> Path:
 
     p2 = doc.new_page()
     y = _text(p2, 72, "Consolidated Statement of Profit or Loss", size=16, bold=True)
-    y = _text(p2, y, "For the years ended 31 December 2025 and 2024")
-    y = _table(p2, y)
+    y = _text(p2, y, f"For the years ended 31 December {years[0]} and {years[1]}")
+    y = _table(p2, y, table)
     _text(p2, y, "The accompanying notes form an integral part of these financial statements.")
 
     p3 = doc.new_page()
@@ -75,8 +78,10 @@ def build_sample_report(path: Path) -> Path:
 
     p5 = doc.new_page()
     y = _text(p5, 72, "Consolidated Statement of Financial Position", size=16, bold=True)
-    y = _text(p5, y, "As at 31 December 2025 and 2024 (expressed in millions of Rupiah)")
-    _table(p5, y, BALANCE_SHEET, col_x=(72, 242, 292, 412, 532))
+    y = _text(
+        p5, y, f"As at 31 December {years[0]} and {years[1]} (expressed in millions of Rupiah)"
+    )
+    _table(p5, y, balance_sheet, col_x=(72, 242, 292, 412, 532))
 
     # Printed labels differ from physical numbers, like a real report (cover "i", then 86…).
     doc.set_page_labels(
@@ -87,3 +92,28 @@ def build_sample_report(path: Path) -> Path:
     )
     doc.save(path)
     return path
+
+
+# Annual Report 2024: its FY2024 column agrees with the 2025 report's comparative except revenue
+# (10,520 vs 10,500: a conflict), and it adds FY2023.
+TABLE_2024 = [
+    ["(Rp billion)", "2024", "2023"],
+    ["Revenue", "10,520", "9,000"],
+    ["Gross profit", "4,100", "3,600"],
+    ["Operating income", "2,050", "1,700"],
+    ["Net income", "1,400", "1,150"],
+]
+BALANCE_SHEET_2024 = [
+    ["", "Notes", "31 December 2024", "31 December 2023"],
+    ["Cash and cash equivalents", "4", "2.840.250", "2.500.000"],
+    ["Total current assets", "", "11.300.000", "10.100.000"],
+    ["Total assets", "", "41.200.000", "38.000.000"],
+    ["Total current liabilities", "", "9.040.000", "8.000.000"],
+    ["Total borrowings", "12", "9.100.000", "9.500.000"],
+    ["Total liabilities", "", "19.300.000", "18.000.000"],
+    ["Total equity", "", "21.900.000", "20.000.000"],
+]
+
+
+def build_report_2024(path: Path) -> Path:
+    return build_sample_report(path, TABLE_2024, BALANCE_SHEET_2024, (2024, 2023))

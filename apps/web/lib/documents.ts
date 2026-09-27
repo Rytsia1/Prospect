@@ -17,6 +17,7 @@ export type ProspectDocument = {
   filename: string;
   document_type: DocumentType;
   fiscal_year: number | null;
+  company_name: string | null;
   mime_type: string;
   size_bytes: number;
   status: DocumentStatus;
@@ -109,6 +110,7 @@ export type FactStatus = "accepted" | "needs_review";
 
 export type FinancialFact = {
   id: string;
+  document_id: string;
   metric: string;
   metric_name: string;
   value: string; // decimal string, full value in currency units; never parsed into a float

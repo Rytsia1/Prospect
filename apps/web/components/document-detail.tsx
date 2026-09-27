@@ -4,9 +4,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { CalculationsPanel } from "@/components/calculations-panel";
+import { Dashboard } from "@/components/dashboard";
+import { ExportPanel } from "@/components/export-panel";
 import { EvidenceCard, FactsPanel } from "@/components/facts-panel";
 import { PageViewer } from "@/components/page-viewer";
+import { ReconciliationView } from "@/components/reconciliation";
 import { StatusBadge } from "@/components/status-badge";
+import { Timeline } from "@/components/timeline";
 import { ApiError, api } from "@/lib/api";
 import {
   DOCUMENT_TYPE_LABEL,
@@ -16,26 +20,38 @@ import {
   isSettled,
   type ProspectDocument,
 } from "@/lib/documents";
+import { type Financials, latestPeriod, type Scope, TABS, type Tab } from "@/lib/financials";
 
 const POLL_MS = 5000;
+const USES_FINANCIALS: Tab[] = ["overview", "timeline", "reconciliation", "export"];
 
-export function DocumentDetail({ id, initialPage }: { id: string; initialPage: number }) {
+export type WorkspaceState = { tab: Tab; scope: Scope; period: string | null; page: number };
+
+export function DocumentDetail({ id, initial }: { id: string; initial: WorkspaceState }) {
   const [document, setDocument] = useState<ProspectDocument | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [opening, setOpening] = useState(false);
   const router = useRouter();
-  const [page, setPage] = useState(initialPage);
+  const [state, setState] = useState(initial);
   const [evidence, setEvidence] = useState<FinancialFact | null>(null);
+  const [fin, setFin] = useState<Financials | null>(null);
+  const [finError, setFinError] = useState<string | null>(null);
 
-  function goToPage(n: number) {
-    setPage(n);
-    router.replace(`?page=${n}`, { scroll: false }); // shareable link to this page
+  function href(patch: Partial<WorkspaceState>): string {
+    const next = { ...state, ...patch };
+    const params = new URLSearchParams({ tab: next.tab, scope: next.scope, page: `${next.page}` });
+    if (next.period) params.set("period", next.period);
+    return `?${params}`;
   }
+  function update(patch: Partial<WorkspaceState>) {
+    setState((s) => ({ ...s, ...patch }));
+    router.replace(href(patch), { scroll: false }); // shareable link to this view
+  }
+  const goToPage = (page: number) => update({ page });
 
   function showEvidence(fact: FinancialFact) {
     setEvidence(fact);
-    goToPage(fact.evidence.page_number);
-    window.document.getElementById("evidence-view")?.scrollIntoView({ behavior: "smooth" });
+    update({ tab: "evidence", page: fact.evidence.page_number });
   }
 
   const load = useCallback(async () => {
@@ -50,6 +66,20 @@ export function DocumentDetail({ id, initialPage }: { id: string; initialPage: n
   useEffect(() => {
     load();
   }, [load]);
+
+  const ready = document?.status === "READY";
+  const scope: Scope = document?.company_name ? state.scope : "document";
+  const loadFinancials = useCallback(async () => {
+    setFinError(null);
+    try {
+      setFin(await api<Financials>(`/documents/${id}/financials?scope=${scope}`));
+    } catch (e) {
+      setFinError(e instanceof ApiError ? e.message : "Could not load financial data.");
+    }
+  }, [id, scope]);
+  useEffect(() => {
+    if (ready) loadFinancials();
+  }, [ready, loadFinancials]);
 
   const active = document ? !isSettled(document.status) : false;
   useEffect(() => {
@@ -109,6 +139,7 @@ export function DocumentDetail({ id, initialPage }: { id: string; initialPage: n
   const rows: [string, string][] = [
     ["Type", DOCUMENT_TYPE_LABEL[document.document_type]],
     ["Fiscal year", document.fiscal_year ? `FY${document.fiscal_year}` : "Not specified"],
+    ["Company", document.company_name ?? "Not specified"],
     ["Size", formatBytes(document.size_bytes)],
     ["Format", document.mime_type],
     ["Uploaded", formatDate(document.created_at)],
@@ -160,26 +191,214 @@ export function DocumentDetail({ id, initialPage }: { id: string; initialPage: n
         ))}
       </dl>
 
-      {document.status === "READY" ? (
-        <>
-          <FactsPanel documentId={document.id} onShowEvidence={showEvidence} />
-          <CalculationsPanel documentId={document.id} onShowEvidence={showEvidence} />
-          <div id="evidence-view" className="scroll-mt-4 space-y-3">
-            {evidence && <EvidenceCard fact={evidence} onClose={() => setEvidence(null)} />}
-            <PageViewer
-              documentId={document.id}
-              page={page}
-              onPageChange={goToPage}
-              highlight={evidence?.evidence.page_number === page ? evidence.evidence.content : null}
-            />
-          </div>
-        </>
+      {ready ? (
+        <Workspace
+          document={document}
+          state={{ ...state, scope }}
+          href={href}
+          update={update}
+          fin={fin?.scope === scope ? fin : null}
+          finError={finError}
+          reload={loadFinancials}
+          evidence={evidence}
+          setEvidence={setEvidence}
+          showEvidence={showEvidence}
+          goToPage={goToPage}
+          onCompanyChange={(d) => {
+            setDocument(d);
+            setFin(null);
+          }}
+        />
       ) : (
         document.status !== "FAILED" && (
           <p className="text-sm text-slate-500">
             Extracted pages appear here once processing finishes.
           </p>
         )
+      )}
+    </div>
+  );
+}
+
+function CompanyEditor({
+  document,
+  onSaved,
+}: {
+  document: ProspectDocument;
+  onSaved: (d: ProspectDocument) => void;
+}) {
+  const [value, setValue] = useState(document.company_name ?? "");
+  const [message, setMessage] = useState<string | null>(null);
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      const saved = await api<ProspectDocument>(`/documents/${document.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ company_name: value.trim() || null }),
+      });
+      onSaved(saved);
+      setMessage("Saved.");
+    } catch (err) {
+      setMessage(err instanceof ApiError ? err.message : "Could not save.");
+    }
+  }
+  return (
+    <form onSubmit={save} className="flex flex-wrap items-center gap-2 text-sm">
+      <label htmlFor="company" className="text-slate-600">
+        Company
+      </label>
+      <input
+        id="company"
+        value={value}
+        maxLength={200}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="e.g. PT Contoh Sejahtera Tbk"
+        className="w-64 rounded border border-slate-300 px-2 py-1"
+      />
+      <button type="submit" className="rounded border border-slate-300 px-3 py-1 hover:bg-slate-50">
+        Save
+      </button>
+      <span role="status" className="text-slate-500">
+        {message}
+      </span>
+      <span className="w-full text-xs text-slate-500">
+        Reports with the same company name are combined in the company timeline.
+      </span>
+    </form>
+  );
+}
+
+function Workspace(props: {
+  document: ProspectDocument;
+  state: WorkspaceState;
+  href: (patch: Partial<WorkspaceState>) => string;
+  update: (patch: Partial<WorkspaceState>) => void;
+  fin: Financials | null;
+  finError: string | null;
+  reload: () => void;
+  evidence: FinancialFact | null;
+  setEvidence: (f: FinancialFact | null) => void;
+  showEvidence: (f: FinancialFact) => void;
+  goToPage: (page: number) => void;
+  onCompanyChange: (d: ProspectDocument) => void;
+}) {
+  const { document, state, href, update, fin, finError, evidence } = props;
+  const { tab, scope, page } = state;
+  const period = fin && state.period && fin.periods.includes(state.period) ? state.period : null;
+  const shownPeriod = period ?? (fin ? latestPeriod(fin) : null);
+
+  function financialsBody() {
+    if (finError) {
+      return (
+        <p role="alert" className="text-sm text-red-800">
+          {finError}{" "}
+          <button type="button" onClick={props.reload} className="underline">
+            Try again
+          </button>
+        </p>
+      );
+    }
+    if (!fin) {
+      return (
+        <p role="status" className="text-sm text-slate-500">
+          Loading financial data…
+        </p>
+      );
+    }
+    if (fin.cells.length === 0 && tab !== "export") {
+      return (
+        <p className="rounded border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-600">
+          No annual or balance-sheet financial facts were found with enough evidence in this{" "}
+          {scope === "company" ? "company" : "document"}. Prospect does not guess values.
+        </p>
+      );
+    }
+    if (tab === "overview" && shownPeriod) {
+      return (
+        <Dashboard
+          fin={fin}
+          documentId={document.id}
+          scope={scope}
+          period={shownPeriod}
+          onPeriod={(p) => update({ period: p })}
+        />
+      );
+    }
+    if (tab === "timeline") return <Timeline fin={fin} documentId={document.id} scope={scope} />;
+    if (tab === "reconciliation") return <ReconciliationView fin={fin} />;
+    return <ExportPanel fin={fin} documentId={document.id} scope={scope} />;
+  }
+
+  return (
+    <div className="space-y-6">
+      <CompanyEditor document={document} onSaved={props.onCompanyChange} />
+      <nav aria-label="Document workspace" className="border-b border-slate-200">
+        <ul className="-mb-px flex flex-wrap gap-x-1">
+          {TABS.map(([key, label]) => (
+            <li key={key}>
+              <Link
+                href={href({ tab: key })}
+                replace
+                scroll={false}
+                onClick={(e) => {
+                  e.preventDefault();
+                  update({ tab: key });
+                }}
+                aria-current={tab === key ? "page" : undefined}
+                className={`inline-block border-b-2 px-3 py-2 text-sm ${
+                  tab === key
+                    ? "border-slate-900 font-medium text-slate-900"
+                    : "border-transparent text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                {label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
+      {USES_FINANCIALS.includes(tab) && document.company_name && (
+        <fieldset className="flex flex-wrap items-center gap-4 text-sm">
+          <legend className="sr-only">Scope</legend>
+          {(["document", "company"] as const).map((s) => (
+            <label key={s} className="flex items-center gap-2">
+              <input
+                type="radio"
+                name="scope"
+                checked={scope === s}
+                onChange={() => update({ scope: s })}
+              />
+              {s === "document" ? "This document" : `All reports of ${document.company_name}`}
+            </label>
+          ))}
+        </fieldset>
+      )}
+
+      {USES_FINANCIALS.includes(tab) && financialsBody()}
+      {tab === "financials" && (
+        <div className="space-y-8">
+          <FactsPanel documentId={document.id} onShowEvidence={props.showEvidence} />
+          <CalculationsPanel documentId={document.id} onShowEvidence={props.showEvidence} />
+        </div>
+      )}
+      {tab === "evidence" && (
+        <div className="space-y-3">
+          {evidence ? (
+            <EvidenceCard fact={evidence} onClose={() => props.setEvidence(null)} />
+          ) : (
+            <p className="text-xs text-slate-500">
+              Browse the extracted pages. Choose a fact under Financials, Overview or Timeline to
+              see its source here or in the evidence explorer.
+            </p>
+          )}
+          <PageViewer
+            documentId={document.id}
+            page={page}
+            onPageChange={props.goToPage}
+            highlight={evidence?.evidence.page_number === page ? evidence.evidence.content : null}
+          />
+        </div>
       )}
     </div>
   );

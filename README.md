@@ -111,6 +111,15 @@ context, no LLM. Each result stores its formula and input facts, so every ratio 
 the source pages. A missing input, zero denominator, or mismatched currency/period is stored as
 `not_possible` with a reason, never as zero. Rounding happens only in the UI.
 
+The research workspace (Overview, Financials, Timeline, Evidence, Reconciliation, Export) is
+derived on read from the same facts (`app/workspace.py`, `app/financials.py`): nothing is copied
+into view tables. Reports that share a company name form a company timeline; a value repeated as a
+comparative in a later report is shown once, and values that disagree are shown as conflicts,
+never overwritten. Exports (CSV, JSON, XLSX) serialize that same payload with exact decimals; XLSX
+is written with the standard library, so no spreadsheet dependency is added. Balance-sheet
+reconciliation tolerance is configurable with `RECONCILIATION_ROUNDING_UNITS` (default 3) and
+`RECONCILIATION_RELATIVE_TOLERANCE` (default 0.0001).
+
 PDF parsing uses PyMuPDF, which is licensed AGPL-3.0 (commercial licenses are available from
 Artifex). Running it in a public web service carries AGPL obligations; review before launch.
 

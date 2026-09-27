@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Path, Query
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -52,12 +52,25 @@ DbSession = Annotated[Session, Depends(get_session)]
 Storage = Annotated[ObjectStorage, Depends(get_storage)]
 
 
+def _company(name: str | None) -> str | None:
+    """Collapse whitespace; blank means no company."""
+    return (" ".join(name.split()) or None) if name is not None else None
+
+
+CompanyName = Annotated[str | None, Field(max_length=200), AfterValidator(_company)]
+
+
 class DocumentCreate(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_type: str
     size_bytes: int = Field(gt=0)
     document_type: DocumentType = DocumentType.ANNUAL_REPORT
     fiscal_year: int | None = Field(default=None, ge=1900, le=2200)
+    company_name: CompanyName = None
+
+
+class DocumentUpdate(BaseModel):
+    company_name: CompanyName  # groups the user's reports into one company workspace; null clears
 
 
 class DocumentOut(BaseModel):
@@ -67,6 +80,7 @@ class DocumentOut(BaseModel):
     filename: str
     document_type: DocumentType
     fiscal_year: int | None
+    company_name: str | None
     mime_type: str
     size_bytes: int
     status: DocumentStatus
@@ -148,6 +162,7 @@ class EvidenceOut(BaseModel):
 
 class FactOut(BaseModel):
     id: uuid.UUID
+    document_id: uuid.UUID
     metric: str
     metric_name: str
     value: DecimalStr  # full value in currency units, sign preserved
@@ -220,6 +235,7 @@ def create_document(
         filename=body.filename,
         document_type=body.document_type,
         fiscal_year=body.fiscal_year,
+        company_name=body.company_name,
         mime_type=PDF_MIME,
         size_bytes=body.size_bytes,
         # Random, owner-independent key; the bucket is private and only signed URLs reach it.
@@ -285,6 +301,16 @@ def list_documents(
 @router.get("/{document_id}")
 def get_document(document_id: uuid.UUID, user_id: CurrentUserId, session: DbSession) -> DocumentOut:
     return DocumentOut.model_validate(_owned_document(session, user_id, document_id))
+
+
+@router.patch("/{document_id}")
+def update_document(
+    document_id: uuid.UUID, body: DocumentUpdate, user_id: CurrentUserId, session: DbSession
+) -> DocumentOut:
+    document = _owned_document(session, user_id, document_id, lock=True)
+    document.company_name = body.company_name
+    session.commit()
+    return DocumentOut.model_validate(document)
 
 
 @router.get("/{document_id}/download-url")
@@ -360,20 +386,21 @@ def list_sections(
     return SectionList(items=[SectionOut.model_validate(s) for s in sections])
 
 
-def _facts(session: Session, document_id: uuid.UUID) -> list[FactOut]:
-    """The document's facts with evidence; callers must have passed _owned_document."""
+def _facts(session: Session, *document_ids: uuid.UUID) -> list[FactOut]:
+    """The documents' facts with evidence; callers must have checked ownership of every id."""
     rows = session.execute(
         select(FinancialFact, FinancialMetric, Evidence, DocumentPage, SectionRow)
         .join(FinancialMetric, FinancialMetric.id == FinancialFact.metric_id)
         .join(Evidence, Evidence.id == FinancialFact.evidence_id)
         .join(DocumentPage, DocumentPage.id == Evidence.page_id)
         .join(SectionRow, SectionRow.id == Evidence.section_id)
-        .where(FinancialFact.document_id == document_id)
+        .where(FinancialFact.document_id.in_(document_ids))
         .order_by(FinancialMetric.category, FinancialMetric.key, FinancialFact.fiscal_year.desc())
     )
     return [
         FactOut(
             id=fact.id,
+            document_id=fact.document_id,
             metric=metric.key,
             metric_name=metric.name,
             value=fact.value_numeric,

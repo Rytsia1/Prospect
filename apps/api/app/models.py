@@ -109,6 +109,9 @@ class Document(Base):
     filename: Mapped[str] = mapped_column(String(255))
     document_type: Mapped[DocumentType] = mapped_column(_enum(DocumentType, "document_type"))
     fiscal_year: Mapped[int | None] = mapped_column(Integer)
+    # User-entered; groups a user's reports into one company workspace (whitespace-collapsed,
+    # compared case-insensitively). NULL: the document stands alone.
+    company_name: Mapped[str | None] = mapped_column(String(200))
     mime_type: Mapped[str] = mapped_column(String(100))
     size_bytes: Mapped[int] = mapped_column(BigInteger)
     # Private object key; never a public URL (AGENTS rule 14).

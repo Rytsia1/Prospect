@@ -1,3 +1,4 @@
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic import SecretStr, field_validator
@@ -19,6 +20,10 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     log_level: str = "INFO"
     max_upload_bytes: int = 50 * 1024 * 1024
+    # Balance-sheet reconciliation (app/workspace.py): a difference within
+    # min(printed unit × rounding units, relative tolerance × |assets|) is ROUNDING_DIFFERENCE.
+    reconciliation_rounding_units: Decimal = Decimal(3)
+    reconciliation_relative_tolerance: Decimal = Decimal("0.0001")
 
     @field_validator("database_url")
     @classmethod

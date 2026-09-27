@@ -48,6 +48,7 @@ ResearchSession
 | filename | VARCHAR | original name |
 | document_type | ENUM | annual_report, financial_statement, prospectus |
 | fiscal_year | INTEGER | nullable |
+| company_name | VARCHAR(200) | nullable; user-entered, whitespace-collapsed; groups a user's reports into one company workspace (case-insensitive match) |
 | mime_type | VARCHAR | required |
 | size_bytes | BIGINT | required, > 0; verified against the stored object |
 | storage_key | VARCHAR | private object key |

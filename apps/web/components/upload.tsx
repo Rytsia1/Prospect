@@ -23,6 +23,7 @@ export function Upload({ onUploaded }: { onUploaded: () => void }) {
   const [dragging, setDragging] = useState(false);
   const [documentType, setDocumentType] = useState<DocumentType>("annual_report");
   const [fiscalYear, setFiscalYear] = useState("");
+  const [company, setCompany] = useState("");
   const busy = state.phase === "uploading" || state.phase === "verifying";
 
   async function start(file: File) {
@@ -38,6 +39,7 @@ export function Upload({ onUploaded }: { onUploaded: () => void }) {
           size_bytes: file.size,
           document_type: documentType,
           fiscal_year: fiscalYear ? Number(fiscalYear) : null,
+          company_name: company.trim() || null,
         }),
       });
       onUploaded(); // show the UPLOADING row in the list right away
@@ -114,6 +116,18 @@ export function Upload({ onUploaded }: { onUploaded: () => void }) {
             onChange={(e) => setFiscalYear(e.target.value)}
             disabled={busy}
             className="w-28 rounded border border-slate-300 px-2 py-1"
+          />
+        </label>
+        <label className="flex items-center gap-2">
+          <span className="text-slate-600">Company</span>
+          <input
+            type="text"
+            maxLength={200}
+            placeholder="Optional; groups reports"
+            value={company}
+            onChange={(e) => setCompany(e.target.value)}
+            disabled={busy}
+            className="w-56 rounded border border-slate-300 px-2 py-1"
           />
         </label>
       </div>

@@ -101,6 +101,40 @@ it; it is never derived by summing components (`financial_metrics.description`).
 current_assets / current_liabilities
 ```
 
+## 10a. Year-over-Year Change
+
+```text
+(value[period] − value[period one year earlier]) / value[period one year earlier]
+```
+
+Used for every timeline metric. Annual periods compare with the previous fiscal year (the two
+periods must be a year apart); balances compare with the date one year earlier. A negative base is
+calculated but flagged. Conflicting inputs make the result unavailable (INCOMPATIBLE_INPUTS).
+
+## 10b. Balance Sheet Reconciliation
+
+A data-consistency check, not an audit:
+
+```text
+difference = total_assets − (total_liabilities + total_equity)
+```
+
+| Status | Rule |
+|---|---|
+| BALANCED | difference = 0 |
+| ROUNDING_DIFFERENCE | 0 < abs(difference) ≤ tolerance |
+| MISMATCH | abs(difference) > tolerance |
+| INSUFFICIENT_DATA | an input is missing, under review, conflicting, or in another currency |
+
+```text
+tolerance = min(largest printed unit × RECONCILIATION_ROUNDING_UNITS,
+                RECONCILIATION_RELATIVE_TOLERANCE × abs(total_assets))
+```
+
+Defaults: 3 printed units (e.g. Rp3 million for a statement in millions) and 0.01% of assets. The
+relative cap keeps a coarse presentation scale from hiding a material gap. Both are environment
+variables. Cash-flow reconciliation is not performed: cash-flow lines are not extracted.
+
 ## 11. Rounding
 
 Internal calculations retain full available precision.

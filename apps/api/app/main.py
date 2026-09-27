@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException
 
-from app import auth, documents
+from app import auth, documents, financials
 from app.config import get_settings
 from app.logs import configure_logging
 
@@ -25,6 +25,7 @@ log = logging.getLogger("prospect.api")
 app = FastAPI(title="Prospect API", version="0.1.0")
 app.include_router(auth.router, prefix=API_V1_PREFIX)
 app.include_router(documents.router, prefix=API_V1_PREFIX)
+app.include_router(financials.router, prefix=API_V1_PREFIX)
 
 
 class ErrorBody(BaseModel):
@@ -95,7 +96,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID"],
+    expose_headers=["X-Request-ID", "Content-Disposition"],  # export filenames
 )
 
 

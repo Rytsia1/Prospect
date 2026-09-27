@@ -56,6 +56,12 @@ FORMULAS: dict[str, tuple[str, str, str, Unit]] = {
         "percent",
     ),
     "debt_to_equity": ("debt_to_equity", "Debt-to-equity", "total_debt / equity", "times"),
+    "yoy_change": (
+        "yoy_change",
+        "Year-over-year change",
+        "(value[period] − value[period one year earlier]) / value[period one year earlier]",
+        "percent",
+    ),
     "current_ratio": (
         "current_ratio",
         "Current ratio",
@@ -112,6 +118,9 @@ class Result:
     notes: tuple[str, ...] = ()
 
 
+# Stands in for an input whose sources disagree (app/workspace.py): never picked, never zero.
+CONFLICTED = FactInput(uuid.UUID(int=0), "", Decimal(0), "", "", "", None, None)
+
 # (description used in reasons, the fact or None when not found), in formula argument order
 Needed = list[tuple[str, FactInput | None]]
 
@@ -127,7 +136,7 @@ def evaluate(
 ) -> Result:
     """Check inputs, then divide. `fraction` maps input values to (numerator, denominator)."""
     metric, _, _, unit = FORMULAS[formula_key]
-    found = [f for _, f in needed if f is not None]
+    found = [f for _, f in needed if f is not None and f is not CONFLICTED]
     base = Result(
         metric,
         formula_key,
@@ -143,6 +152,12 @@ def evaluate(
     def not_possible(code: str, reason: str) -> Result:
         return replace(base, reason_code=code, reason=reason)
 
+    conflicting = [desc for desc, f in needed if f is CONFLICTED]
+    if conflicting:
+        return not_possible(
+            INCOMPATIBLE_INPUTS,
+            "; ".join(f"{c} has conflicting values across documents" for c in conflicting) + ".",
+        )
     missing = [desc for desc, f in needed if f is None]
     if missing:
         return not_possible(MISSING_INPUT, "; ".join(f"{m} was not found" for m in missing) + ".")
@@ -177,8 +192,8 @@ def _revenue_periods_problem(
     year: int, current: FactInput | None, previous: FactInput | None
 ) -> str | None:
     """Growth needs two comparable annual periods exactly a year apart."""
-    if not (current and previous):
-        return None  # reported as missing instead
+    if not (current and previous) or CONFLICTED in (current, previous):
+        return None  # reported as missing or conflicting instead
     if (current.period_end is None) != (previous.period_end is None):
         return f"FY{year} and FY{year - 1} revenue do not state comparable periods."
     if current.period_end and _year_before(current.period_end) != previous.period_end:
@@ -233,18 +248,35 @@ def _returns(
     return results
 
 
-def calculate(facts: list[FactInput]) -> list[Result]:
-    """Every supported ratio for every annual year and balance-sheet date found in the facts.
+def _tables(
+    facts: list[FactInput], conflicted: list[FactInput]
+) -> tuple[dict[tuple[str, int | None], FactInput], dict[tuple[str, object], FactInput]]:
+    """Annual facts by (metric, fiscal year); balances by (metric, date or fiscal year).
 
-    `facts` must be accepted facts: at most one per (metric, period_type, period_label).
+    A key with conflicting sources maps to CONFLICTED, so it is reported, never picked.
     """
     # Input order never changes the result (and ties on a balance date resolve the same way).
     facts = sorted(facts, key=lambda f: (f.metric, f.period_label, str(f.id)))
-    annual = {(f.metric, f.fiscal_year): f for f in facts if f.period_type == "annual"}
-    # Balances are keyed by their date, or by fiscal year when the document states only the year.
-    instants: dict[tuple[str, object], FactInput] = {
-        (f.metric, f.period_end or f.fiscal_year): f for f in facts if f.period_type == "instant"
-    }
+    annual: dict[tuple[str, int | None], FactInput] = {}
+    instants: dict[tuple[str, object], FactInput] = {}
+    for group, value in ((facts, None), (conflicted, CONFLICTED)):
+        for f in group:
+            if f.period_type == "annual":
+                annual[(f.metric, f.fiscal_year)] = value or f
+            elif f.period_type == "instant":
+                # By date, or by fiscal year when the document states only the year.
+                instants[(f.metric, f.period_end or f.fiscal_year)] = value or f
+    return annual, instants
+
+
+def calculate(facts: list[FactInput], conflicted: list[FactInput] | None = None) -> list[Result]:
+    """Every supported ratio for every annual year and balance-sheet date found in the facts.
+
+    `facts`: accepted facts, at most one per (metric, period). `conflicted`: facts whose value
+    disagrees with another source for the same metric and period; they make results not_possible.
+    """
+    conflicted = conflicted or []
+    annual, instants = _tables(facts, conflicted)
     results: list[Result] = []
 
     for year in sorted({y for _, y in annual if y is not None}):
@@ -272,7 +304,12 @@ def calculate(facts: list[FactInput]) -> list[Result]:
         )
         results += _returns(year, net_income, instants)
 
-    labels = {key: f.period_label for (_, key), f in instants.items()}
+    labels = {
+        key: f.period_label
+        for f in facts + conflicted
+        if f.period_type == "instant"
+        for key in [f.period_end or f.fiscal_year]
+    }
     for key in sorted(labels, key=str):
         at = f"at {labels[key]}" if isinstance(key, date) else f"at end of {labels[key]}"
         for formula_key, num, den in (
@@ -293,3 +330,47 @@ def calculate(facts: list[FactInput]) -> list[Result]:
             )
 
     return sorted(results, key=lambda r: (METRIC_ORDER.index(r.metric), r.period_label))
+
+
+def year_over_year(
+    facts: list[FactInput], conflicted: list[FactInput] | None = None
+) -> dict[tuple[str, str, str], Result]:
+    """Change against the same metric one year earlier, keyed by (metric, period_type, label).
+
+    Annual periods compare with the fiscal year before (a year apart, like revenue growth);
+    balances with the date one year earlier. Only when that earlier value exists.
+    """
+    conflicted = conflicted or []
+    annual, instants = _tables(facts, conflicted)
+    changes: dict[tuple[str, str, str], Result] = {}
+    for f in sorted(facts, key=lambda f: (f.metric, f.period_label, str(f.id))):
+        name = f.metric.replace("_", " ").capitalize()
+        if f.period_type == "annual" and f.fiscal_year is not None:
+            previous = annual.get((f.metric, f.fiscal_year - 1))
+            problem = _revenue_periods_problem(f.fiscal_year, f, previous)
+            if problem:
+                problem = problem.replace("revenue", name.lower())
+            earlier = f"FY{f.fiscal_year - 1}"
+        elif f.period_type == "instant":
+            key = f.period_end or f.fiscal_year
+            if isinstance(key, date):
+                previous_key: object = _year_before(key)
+                earlier = _year_before(key).isoformat()
+            elif isinstance(key, int):
+                previous_key, earlier = key - 1, f"FY{key - 1}"
+            else:
+                continue
+            previous, problem = instants.get((f.metric, previous_key)), None
+        else:
+            continue  # quarters and interim periods: no comparable earlier period modelled yet
+        if previous is None:
+            continue
+        changes[(f.metric, f.period_type, f.period_label)] = evaluate(
+            "yoy_change",
+            f.period_type,
+            f.period_label,
+            [(f"{name} for {earlier}", previous), (f"{name} for {f.period_label}", f)],
+            lambda prev, cur: (CONTEXT.subtract(cur, prev), prev),
+            problem,
+        )
+    return changes
