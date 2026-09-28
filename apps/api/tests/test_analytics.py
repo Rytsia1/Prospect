@@ -324,6 +324,17 @@ def test_year_over_year_for_flows_and_balances():
     assert ("net_income", "annual", "FY2024") not in changes  # no earlier year: no change
 
 
+def test_negative_numerator_and_denominator_is_flagged():
+    # Net loss with negative equity: mathematical division is positive, but performance is negative
+    loss = fact("net_income", -10, 2025)
+    def_eq = fact("equity", -50, FY2025)
+    r = one_of(calculate([loss, def_eq]), "roe", "FY2025")
+    assert r.status == "calculated"
+    assert r.value == Decimal("0.2")  # (-10) / (-50) = +0.20
+    assert len(r.notes) >= 1
+    assert any("does not represent a positive financial return" in n for n in r.notes)
+
+
 def one_of(results, metric, period_label):
     [r] = [r for r in results if (r.metric, r.period_label) == (metric, period_label)]
     return r

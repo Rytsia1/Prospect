@@ -389,8 +389,11 @@ def disassociate_document(
     session: DbSession,
 ) -> DocumentOut:
     """Remove document from company workspace (document remains as standalone)."""
-    _owned_company(session, user_id, company_id)
+    company = _owned_company(session, user_id, company_id)
     doc = _owned_document(session, user_id, document_id, lock=True)
+
+    if doc.company_id != company.id:
+        raise ApiError(404, "not_found", "Document is not associated with this company")
 
     doc.company_id = None
     session.commit()

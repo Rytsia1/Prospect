@@ -583,6 +583,57 @@ def test_data_quality_anomaly_lifecycle(client_a, db_session, user_a):
     assert len(events) >= 2
 
 
+def test_data_quality_detects_impossible_relationships_and_suspicious_values(
+    client_a, db_session, user_a
+):
+    doc, facts = seed_document(db_session, user_a, "Anomaly_Doc.pdf", 2024)
+    # Add an impossible relationship: current assets = 50T, total assets = 40T (Current > Total)
+    m_ca = db_session.scalar(
+        select(FinancialMetric).where(FinancialMetric.key == "current_assets")
+    )
+    p = db_session.scalar(select(DocumentPage).where(DocumentPage.document_id == doc.id))
+    s = db_session.scalar(select(DocumentSection).where(DocumentSection.document_id == doc.id))
+    ev = Evidence(
+        document_id=doc.id,
+        page_id=p.id,
+        page_number=p.page_number,
+        section_id=s.id,
+        chunk_id=uuid.uuid4(),
+        evidence_type=EvidenceType.TABLE_ROW,
+        content="Current Assets 50,000,000,000,000",
+        locator={},
+    )
+    db_session.add(ev)
+    db_session.flush()
+
+    ca_fact = FinancialFact(
+        document_id=doc.id,
+        metric_id=m_ca.id,
+        evidence_id=ev.id,
+        value_numeric=Decimal("50000000000000"),
+        currency="IDR",
+        scale="trillions",
+        original_text="50,000,000",
+        period_type=PeriodType.INSTANT,
+        period_label="2024-12-31",
+        fiscal_year=2024,
+        confidence=Decimal("0.9000"),
+        extraction_method="parser",
+        status=FactStatus.ACCEPTED,
+    )
+    db_session.add(ca_fact)
+    db_session.commit()
+
+    res = client_a.get(f"/api/v1/data-quality?document_id={doc.id}")
+    assert res.status_code == 200
+    issues = res.json()["issues"]
+    impossible = [i for i in issues if i["rule_type"] == "IMPOSSIBLE_RELATIONSHIP"]
+    assert len(impossible) >= 1
+    assert "current assets" in impossible[0]["description"].lower()
+    assert "requires review" in impossible[0]["description"].lower()
+
+
+
 # ==========================================================================================
 # 9. SCENARIO ANALYSIS TESTS
 # ==========================================================================================

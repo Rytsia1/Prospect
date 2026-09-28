@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -74,9 +74,13 @@ class CellOut(BaseModel):
 class ReconciliationOut(BaseModel):
     check: Literal["balance_sheet"] = "balance_sheet"
     formula: str = "total_assets − (total_liabilities + equity)"
+    expected_relationship: str = "assets = liabilities + equity"
     period: str
     status: Literal["BALANCED", "ROUNDING_DIFFERENCE", "MISMATCH", "INSUFFICIENT_DATA"]
+    outcome: Literal["PASS", "FAIL", "NOT_CHECKABLE"] = "NOT_CHECKABLE"
     fact_ids: dict[str, uuid.UUID]
+    actual_values: dict[str, DecimalStr] = Field(default_factory=dict)
+    source_evidence: dict[str, uuid.UUID] = Field(default_factory=dict)
     liabilities_plus_equity: DecimalStr | None
     difference: DecimalStr | None
     tolerance: DecimalStr | None
@@ -191,10 +195,12 @@ def load_financials(
                 f.period_label,
                 f.period_end,
                 f.fiscal_year,
+                evidence_id=f.evidence.id,
             ),
             f.document_id,
             "accepted" if f.status.value in ("accepted", "corrected") else "needs_review",
             f.scale,
+            evidence_id=f.evidence.id,
         )
         for f in facts
     ]
@@ -229,6 +235,10 @@ def load_financials(
             ReconciliationOut(
                 period=r.period,
                 status=r.status,
+                outcome=r.outcome,
+                expected_relationship=r.expected_relationship,
+                actual_values={k: str(v) for k, v in r.actual_values.items()},
+                source_evidence=r.source_evidence,
                 fact_ids=r.fact_ids,
                 liabilities_plus_equity=r.liabilities_plus_equity,
                 difference=r.difference,

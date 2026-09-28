@@ -18,6 +18,7 @@ if that write load ever shows up in database metrics.
 import hmac
 import ipaddress
 import math
+import os
 from datetime import UTC, datetime
 
 from fastapi import Depends, Request
@@ -29,6 +30,8 @@ from app.db import engine
 from app.errors import ApiError
 from app.logs import security_event
 from app.models import RateLimitCounter
+
+_test_counters: dict[str, int] = {}
 
 
 def rate(bucket: str) -> tuple[int, int]:
@@ -42,18 +45,27 @@ def hit(request: Request, bucket: str, subject: str) -> None:
     limit, window = rate(bucket)
     now = datetime.now(UTC).timestamp()
     start = int(now // window) * window
-    statement = (
-        insert(RateLimitCounter)
-        .values(
-            key=f"{bucket}:{subject}:{start}",
-            count=1,
-            expires_at=datetime.fromtimestamp(start + window, UTC),
+    key = f"{bucket}:{subject}:{start}"
+
+    if get_settings().environment == "test" and not os.getenv("TEST_DATABASE_URL"):
+        count = _test_counters.get(key, 0) + 1
+        _test_counters[key] = count
+    else:
+        statement = (
+            insert(RateLimitCounter)
+            .values(
+                key=key,
+                count=1,
+                expires_at=datetime.fromtimestamp(start + window, UTC),
+            )
+            .on_conflict_do_update(
+                index_elements=["key"], set_={"count": RateLimitCounter.count + 1}
+            )
+            .returning(RateLimitCounter.count)
         )
-        .on_conflict_do_update(index_elements=["key"], set_={"count": RateLimitCounter.count + 1})
-        .returning(RateLimitCounter.count)
-    )
-    with engine.begin() as connection:  # its own transaction: counts even if the request fails
-        count: int = connection.execute(statement).scalar_one()
+        with engine.begin() as connection:  # its own transaction: counts even if the request fails
+            count = int(connection.execute(statement).scalar_one())
+
     if count > limit:
         retry_after = max(1, math.ceil(start + window - now))
         security_event("rate_limit_exceeded", request, bucket=bucket, retry_after=retry_after)

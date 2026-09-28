@@ -73,6 +73,9 @@ def audit_event(
 
     Readable only by its own user (GET /audit); no endpoint updates or deletes audit rows.
     """
+    import os
+
+    from app.config import get_settings
     from app.db import engine  # lazily: logging is configured before the database exists
     from app.models import AuditEvent
 
@@ -84,6 +87,8 @@ def audit_event(
     metadata = {k: str(v) for k, v in (context | fields | {"result": result}).items() if v}
     if log:
         _audit.info(event, extra={"fields": {"event": event, "user_id": str(user)} | metadata})
+    if get_settings().environment == "test" and not os.getenv("TEST_DATABASE_URL"):
+        return
     try:
         with engine.begin() as connection:
             connection.execute(

@@ -32,6 +32,7 @@ from app.documents import (
     _facts,
 )
 from app.errors import ApiError
+from app.extraction import MAX_ABS_VALUE, NON_NEGATIVE
 from app.models import (
     DataQualityIssue,
     Document,
@@ -273,6 +274,210 @@ def detect_document_anomalies(
                             str(p_facts["total_assets"].evidence.id),
                             str(p_facts["total_liabilities"].evidence.id),
                             str(p_facts["equity"].evidence.id),
+                        ],
+                        status="OPEN",
+                    )
+                )
+
+    # 7. Data-level issues: Missing currency, missing scale, suspicious/impossible magnitude/sign
+    for f in all_facts:
+        m_name = METRIC_NAMES.get(f.metric, f.metric)
+        ev_id = [str(f.evidence.id)] if f.evidence else []
+        f_id = [str(f.id)]
+
+        if f.currency is None:
+            detected.append(
+                DataQualityIssue(
+                    user_id=user_id,
+                    document_id=f.document_id,
+                    rule_type="MISSING_CURRENCY",
+                    severity="WARNING",
+                    metric=f.metric,
+                    period=f.period_label,
+                    description=(
+                        f"Fact for '{m_name}' in {f.period_label} lacks a stated currency. "
+                        "Currency cannot be inferred."
+                    ),
+                    related_fact_ids=f_id,
+                    evidence_ids=ev_id,
+                    status="OPEN",
+                )
+            )
+
+        if not f.scale:
+            detected.append(
+                DataQualityIssue(
+                    user_id=user_id,
+                    document_id=f.document_id,
+                    rule_type="MISSING_SCALE",
+                    severity="INFO",
+                    metric=f.metric,
+                    period=f.period_label,
+                    description=(
+                        f"Fact for '{m_name}' in {f.period_label} has an unstated unit scale."
+                    ),
+                    related_fact_ids=f_id,
+                    evidence_ids=ev_id,
+                    status="OPEN",
+                )
+            )
+
+        if f.metric in NON_NEGATIVE and f.value < 0:
+            detected.append(
+                DataQualityIssue(
+                    user_id=user_id,
+                    document_id=f.document_id,
+                    rule_type="SUSPICIOUS_VALUE",
+                    severity="WARNING",
+                    metric=f.metric,
+                    period=f.period_label,
+                    description=(
+                        f"Negative value ({f.value}) reported for inherently non-negative metric "
+                        f"'{m_name}' in {f.period_label}. This relationship requires review."
+                    ),
+                    related_fact_ids=f_id,
+                    evidence_ids=ev_id,
+                    status="OPEN",
+                )
+            )
+
+        if abs(f.value) > MAX_ABS_VALUE:
+            detected.append(
+                DataQualityIssue(
+                    user_id=user_id,
+                    document_id=f.document_id,
+                    rule_type="SUSPICIOUS_VALUE",
+                    severity="ERROR",
+                    metric=f.metric,
+                    period=f.period_label,
+                    description=(
+                        f"Value for '{m_name}' in {f.period_label} exceeds plausible limits "
+                        f"({f.value}). This value requires review."
+                    ),
+                    related_fact_ids=f_id,
+                    evidence_ids=ev_id,
+                    status="OPEN",
+                )
+            )
+
+    # 8. Deterministic impossible structural relationships within the same period
+    for p in {f.period_label for f in all_facts}:
+        p_accepted = {
+            f.metric: f
+            for f in all_facts
+            if f.period_label == p and f.status in (FactStatus.ACCEPTED, FactStatus.CORRECTED)
+        }
+        # Cash > Current Assets
+        if "cash" in p_accepted and "current_assets" in p_accepted:
+            cash_val = p_accepted["cash"].value
+            ca_val = p_accepted["current_assets"].value
+            if cash_val > ca_val:
+                detected.append(
+                    DataQualityIssue(
+                        user_id=user_id,
+                        document_id=p_accepted["cash"].document_id,
+                        rule_type="IMPOSSIBLE_RELATIONSHIP",
+                        severity="ERROR",
+                        metric="cash",
+                        period=p,
+                        description=(
+                            f"Cash and cash equivalents ({cash_val}) exceeds total current assets "
+                            f"({ca_val}) in {p}. This relationship requires review."
+                        ),
+                        related_fact_ids=[
+                            str(p_accepted["cash"].id),
+                            str(p_accepted["current_assets"].id),
+                        ],
+                        evidence_ids=[
+                            str(p_accepted["cash"].evidence.id),
+                            str(p_accepted["current_assets"].evidence.id),
+                        ],
+                        status="OPEN",
+                    )
+                )
+
+        # Current Assets > Total Assets
+        if "current_assets" in p_accepted and "total_assets" in p_accepted:
+            ca_val = p_accepted["current_assets"].value
+            ta_val = p_accepted["total_assets"].value
+            if ca_val > ta_val:
+                detected.append(
+                    DataQualityIssue(
+                        user_id=user_id,
+                        document_id=p_accepted["current_assets"].document_id,
+                        rule_type="IMPOSSIBLE_RELATIONSHIP",
+                        severity="ERROR",
+                        metric="current_assets",
+                        period=p,
+                        description=(
+                            f"Total current assets ({ca_val}) exceeds total assets "
+                            f"({ta_val}) in {p}. This relationship requires review."
+                        ),
+                        related_fact_ids=[
+                            str(p_accepted["current_assets"].id),
+                            str(p_accepted["total_assets"].id),
+                        ],
+                        evidence_ids=[
+                            str(p_accepted["current_assets"].evidence.id),
+                            str(p_accepted["total_assets"].evidence.id),
+                        ],
+                        status="OPEN",
+                    )
+                )
+
+        # Current Liabilities > Total Liabilities
+        if "current_liabilities" in p_accepted and "total_liabilities" in p_accepted:
+            cl_val = p_accepted["current_liabilities"].value
+            tl_val = p_accepted["total_liabilities"].value
+            if cl_val > tl_val:
+                detected.append(
+                    DataQualityIssue(
+                        user_id=user_id,
+                        document_id=p_accepted["current_liabilities"].document_id,
+                        rule_type="IMPOSSIBLE_RELATIONSHIP",
+                        severity="ERROR",
+                        metric="current_liabilities",
+                        period=p,
+                        description=(
+                            f"Total current liabilities ({cl_val}) exceeds total liabilities "
+                            f"({tl_val}) in {p}. This relationship requires review."
+                        ),
+                        related_fact_ids=[
+                            str(p_accepted["current_liabilities"].id),
+                            str(p_accepted["total_liabilities"].id),
+                        ],
+                        evidence_ids=[
+                            str(p_accepted["current_liabilities"].evidence.id),
+                            str(p_accepted["total_liabilities"].evidence.id),
+                        ],
+                        status="OPEN",
+                    )
+                )
+
+        # Operating Income > Gross Profit (when both positive)
+        if "operating_income" in p_accepted and "gross_profit" in p_accepted:
+            op_val = p_accepted["operating_income"].value
+            gp_val = p_accepted["gross_profit"].value
+            if op_val > gp_val and gp_val > 0:
+                detected.append(
+                    DataQualityIssue(
+                        user_id=user_id,
+                        document_id=p_accepted["operating_income"].document_id,
+                        rule_type="UNUSUAL_RELATIONSHIP",
+                        severity="WARNING",
+                        metric="operating_income",
+                        period=p,
+                        description=(
+                            f"Operating income ({op_val}) exceeds gross profit "
+                            f"({gp_val}) in {p}. This relationship requires review."
+                        ),
+                        related_fact_ids=[
+                            str(p_accepted["operating_income"].id),
+                            str(p_accepted["gross_profit"].id),
+                        ],
+                        evidence_ids=[
+                            str(p_accepted["operating_income"].evidence.id),
+                            str(p_accepted["gross_profit"].evidence.id),
                         ],
                         status="OPEN",
                     )

@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -49,6 +49,8 @@ class FinancialDiffItem(BaseModel):
     metric_name: str
     period: str
     status: Literal["added", "removed", "changed", "unchanged"]
+    is_restatement: bool = False
+    notes: list[str] = Field(default_factory=list)
     value_a: DecimalStr | None
     currency_a: str | None
     scale_a: str | None
@@ -225,17 +227,43 @@ def compute_document_diff(
                 )
             )
         elif fa and fb:
-            diff_abs = CONTEXT.subtract(fb.value, fa.value)
-            pct_change: Decimal | None = None
-            if fa.value != 0:
-                pct_change = CONTEXT.divide(diff_abs, abs(fa.value))
-            status: Literal["changed", "unchanged"] = "unchanged" if diff_abs == 0 else "changed"
+            currency_match = fa.currency == fb.currency
+            scale_match = fa.scale == fb.scale
+            notes: list[str] = []
+            if not currency_match:
+                notes.append(f"Currency mismatch: {fa.currency} vs {fb.currency}")
+            if not scale_match:
+                notes.append(f"Scale presentation differs: {fa.scale} vs {fb.scale}")
+
+            is_restatement = False
+            if doc_b.fiscal_year and period != f"FY{doc_b.fiscal_year}":
+                if fa.value != fb.value or not currency_match:
+                    is_restatement = True
+                    notes.append(
+                        "Restatement or revision of historical period across document versions"
+                    )
+
+            if currency_match:
+                diff_abs = CONTEXT.subtract(fb.value, fa.value)
+                pct_change: Decimal | None = None
+                if fa.value != 0:
+                    pct_change = CONTEXT.divide(diff_abs, abs(fa.value))
+                status: Literal["changed", "unchanged"] = (
+                    "unchanged" if diff_abs == 0 and scale_match else "changed"
+                )
+            else:
+                diff_abs = None
+                pct_change = None
+                status = "changed"
+
             financial_diff.append(
                 FinancialDiffItem(
                     metric=metric,
                     metric_name=metric_name,
                     period=period,
                     status=status,
+                    is_restatement=is_restatement,
+                    notes=notes,
                     value_a=fa.value,
                     currency_a=fa.currency,
                     scale_a=fa.scale,
@@ -244,9 +272,15 @@ def compute_document_diff(
                     currency_b=fb.currency,
                     scale_b=fb.scale,
                     evidence_b=fb.evidence,
-                    absolute_change=diff_abs if status == "changed" else None,
-                    percentage_change=pct_change if status == "changed" else None,
-                    change_formatted=_format_pct(pct_change) if status == "changed" else None,
+                    absolute_change=diff_abs if status == "changed" and currency_match else None,
+                    percentage_change=(
+                        pct_change if status == "changed" and currency_match else None
+                    ),
+                    change_formatted=(
+                        _format_pct(pct_change)
+                        if status == "changed" and currency_match and pct_change is not None
+                        else None
+                    ),
                 )
             )
 

@@ -60,6 +60,7 @@ class SourceFact:
     document_id: uuid.UUID
     status: Literal["accepted", "needs_review"]
     scale: str  # the presentation scale printed in the source
+    evidence_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -78,16 +79,30 @@ class Cell:
     change: Result | None = None  # year-over-year, from the calculation engine
 
 
+ReconciliationOutcome = Literal["PASS", "FAIL", "NOT_CHECKABLE"]
+
+
 @dataclass
 class Reconciliation:
     period: str
     status: ReconciliationStatus
     fact_ids: dict[str, uuid.UUID]  # total_assets / total_liabilities / equity → fact used
+    expected_relationship: str = "assets = liabilities + equity"
+    actual_values: dict[str, Decimal] = field(default_factory=dict)
+    source_evidence: dict[str, uuid.UUID] = field(default_factory=dict)
     liabilities_plus_equity: Decimal | None = None
     difference: Decimal | None = None  # assets − (liabilities + equity)
     tolerance: Decimal | None = None
     currency: str | None = None
     problems: list[str] = field(default_factory=list)
+
+    @property
+    def outcome(self) -> ReconciliationOutcome:
+        if self.status in ("BALANCED", "ROUNDING_DIFFERENCE"):
+            return "PASS"
+        if self.status == "MISMATCH":
+            return "FAIL"
+        return "NOT_CHECKABLE"
 
 
 @dataclass(frozen=True)
@@ -192,6 +207,15 @@ def reconcile(
         CONTEXT.multiply(relative_tolerance, abs(assets)),
     )
     result.currency = currencies[0]
+    result.actual_values = {
+        m: used[m].fact.value for m in ("total_assets", "total_liabilities", "equity") if m in used
+    }
+    source_ev: dict[str, uuid.UUID] = {}
+    for m in used:
+        ev_id = used[m].evidence_id or used[m].fact.evidence_id
+        if ev_id is not None:
+            source_ev[m] = ev_id
+    result.source_evidence = source_ev
     result.liabilities_plus_equity, result.difference = total, difference
     result.tolerance = tolerance
     if difference == 0:

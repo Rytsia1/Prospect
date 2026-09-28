@@ -251,3 +251,26 @@ def test_mixed_currencies_cannot_reconcile():
     )
     [rec] = ws.reconciliations
     assert rec.status == "INSUFFICIENT_DATA" and "different currencies" in rec.problems[0]
+    assert rec.outcome == "NOT_CHECKABLE"
+
+
+def test_reconciliation_explicit_outcomes_and_metadata():
+    # 1. Balanced -> PASS
+    [pass_rec] = balance(100, 60, 40)
+    assert pass_rec.status == "BALANCED"
+    assert pass_rec.outcome == "PASS"
+    assert pass_rec.expected_relationship == "assets = liabilities + equity"
+    assert pass_rec.actual_values["total_assets"] == Decimal("100")
+    assert pass_rec.difference == Decimal("0")
+
+    # 2. Mismatch -> FAIL
+    [fail_rec] = balance(100, 60, 30)
+    assert fail_rec.status == "MISMATCH"
+    assert fail_rec.outcome == "FAIL"
+    assert fail_rec.difference == Decimal("10")
+
+    # 3. Missing -> NOT_CHECKABLE
+    ws_missing = build([src("total_assets", 100, D25)])
+    [not_chk] = ws_missing.reconciliations
+    assert not_chk.status == "INSUFFICIENT_DATA"
+    assert not_chk.outcome == "NOT_CHECKABLE"

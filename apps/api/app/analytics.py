@@ -101,6 +101,7 @@ class FactInput:
     period_label: str
     period_end: date | None
     fiscal_year: int | None
+    evidence_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -172,7 +173,15 @@ def evaluate(
     if denominator == 0:
         return not_possible(DIVISION_BY_ZERO, "The denominator is zero, so the ratio is undefined.")
     if denominator < 0:
-        notes += ("The denominator is negative, so this ratio does not have its usual meaning.",)
+        if numerator < 0:
+            notes += (
+                "Both numerator and denominator are negative; the mathematical ratio is positive "
+                "but does not represent a positive financial return or performance.",
+            )
+        else:
+            notes += (
+                "The denominator is negative, so this ratio does not have its usual meaning.",
+            )
     value = CONTEXT.divide(numerator, denominator)
     return replace(base, status="calculated", value=value, notes=notes)
 

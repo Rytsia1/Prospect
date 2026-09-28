@@ -1364,7 +1364,23 @@ components:
               status:
                 type: string
                 enum: [BALANCED, ROUNDING_DIFFERENCE, MISMATCH, INSUFFICIENT_DATA]
+              outcome:
+                type: string
+                enum: [PASS, FAIL, NOT_CHECKABLE]
+                description: Standardized reconciliation check outcome
+              expected_relationship:
+                type: string
+                example: assets = liabilities + equity
               fact_ids:
+                type: object
+                additionalProperties:
+                  type: string
+                  format: uuid
+              actual_values:
+                type: object
+                additionalProperties:
+                  type: string
+              source_evidence:
                 type: object
                 additionalProperties:
                   type: string
@@ -1624,37 +1640,160 @@ components:
 
     DocumentDiffRequest:
       type: object
-      required: [doc_a_id, doc_b_id]
+      required: [document_a_id, document_b_id]
       properties:
-        doc_a_id:
+        document_a_id:
           type: string
           format: uuid
-        doc_b_id:
+        document_b_id:
           type: string
           format: uuid
 
     DocumentDiffResponse:
       type: object
-      required: [doc_a, doc_b, metadata_diff, financial_diff, section_diff, text_diff]
+      required: [document_a_id, document_b_id, document_a_filename, document_b_filename, metadata_diff, financial_diff, section_diff, text_diff]
       properties:
-        doc_a:
-          type: object
-        doc_b:
-          type: object
+        document_a_id:
+          type: string
+          format: uuid
+        document_b_id:
+          type: string
+          format: uuid
+        document_a_filename:
+          type: string
+        document_b_filename:
+          type: string
         metadata_diff:
-          type: object
+          type: array
+          items:
+            $ref: "#/components/schemas/DiffMetadataItem"
         financial_diff:
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/FinancialDiffItem"
         section_diff:
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/SectionDiffItem"
         text_diff:
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/TextDiffSection"
+
+    DiffMetadataItem:
+      type: object
+      required: [field, label, changed]
+      properties:
+        field:
+          type: string
+        label:
+          type: string
+        value_a:
+          type: string
+          nullable: true
+        value_b:
+          type: string
+          nullable: true
+        changed:
+          type: boolean
+
+    FinancialDiffItem:
+      type: object
+      required: [metric, metric_name, period, status]
+      properties:
+        metric:
+          type: string
+        metric_name:
+          type: string
+        period:
+          type: string
+        status:
+          type: string
+          enum: [added, removed, changed, unchanged]
+        is_restatement:
+          type: boolean
+          default: false
+        notes:
+          type: array
+          items:
+            type: string
+        value_a:
+          type: string
+          nullable: true
+        currency_a:
+          type: string
+          nullable: true
+        scale_a:
+          type: string
+          nullable: true
+        evidence_a:
+          $ref: "#/components/schemas/Evidence"
+          nullable: true
+        value_b:
+          type: string
+          nullable: true
+        currency_b:
+          type: string
+          nullable: true
+        scale_b:
+          type: string
+          nullable: true
+        evidence_b:
+          $ref: "#/components/schemas/Evidence"
+          nullable: true
+        absolute_change:
+          type: string
+          nullable: true
+        percentage_change:
+          type: string
+          nullable: true
+        change_formatted:
+          type: string
+          nullable: true
+
+    SectionDiffItem:
+      type: object
+      required: [status]
+      properties:
+        title:
+          type: string
+          nullable: true
+        ordinal_a:
+          type: integer
+          nullable: true
+        ordinal_b:
+          type: integer
+          nullable: true
+        page_range_a:
+          type: string
+          nullable: true
+        page_range_b:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [added, removed, changed, unchanged, uncertain]
+
+    TextDiffSection:
+      type: object
+      required: [section_title, diff_lines, additions, deletions]
+      properties:
+        section_title:
+          type: string
+        page_a:
+          type: integer
+          nullable: true
+        page_b:
+          type: integer
+          nullable: true
+        diff_lines:
+          type: array
+          items:
+            type: string
+        additions:
+          type: integer
+        deletions:
+          type: integer
 
     FactReviewItem:
       type: object
