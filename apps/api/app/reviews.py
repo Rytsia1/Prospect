@@ -21,6 +21,8 @@ from app.documents import (
     DbSession,
     DecimalStr,
     EvidenceOut,
+    Paragraph,
+    ShortLine,
 )
 from app.errors import ApiError
 from app.extraction import SCALES
@@ -86,21 +88,25 @@ class ReviewHistoryOut(BaseModel):
 
 
 class AcceptRequest(BaseModel):
-    reason: str | None = None
+    reason: Paragraph | None = None
 
 
 class CorrectRequest(BaseModel):
-    value: Decimal = Field(description="Corrected numeric value in currency units")
-    currency: str | None = Field(default=None, min_length=3, max_length=3)
-    scale: str | None = Field(default=None, description="Source unit scale: units, millions, etc.")
+    # Currency units: whole values up to 10^24, at most 6 decimal places. The database column is
+    # unconstrained NUMERIC, so the bound lives here.
+    value: Decimal = Field(
+        max_digits=30, decimal_places=6, description="Corrected value in currency units"
+    )
+    currency: Annotated[ShortLine, Field(min_length=3, max_length=3)] | None = None
+    scale: ShortLine | None = Field(default=None, description="Source unit scale: units, millions")
     period_type: PeriodType | None = None
-    period_label: str | None = Field(default=None, max_length=40)
-    metric_key: str | None = Field(default=None, description="Optional reassigned metric key")
-    reason: str = Field(min_length=3, description="Reason for correction")
+    period_label: ShortLine | None = None
+    metric_key: ShortLine | None = Field(default=None, description="Optional reassigned metric")
+    reason: Annotated[Paragraph, Field(min_length=3, description="Reason for correction")]
 
 
 class RejectRequest(BaseModel):
-    reason: str = Field(min_length=3, description="Reason for rejection")
+    reason: Annotated[Paragraph, Field(min_length=3, description="Reason for rejection")]
 
 
 def _confidence_tier(conf: Decimal) -> Literal["high", "medium", "low"]:

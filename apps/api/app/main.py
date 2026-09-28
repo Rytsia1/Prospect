@@ -13,8 +13,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import DataError, IntegrityError, OperationalError
 from starlette.exceptions import HTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app import (
     audit,
@@ -123,6 +124,18 @@ async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
     return _error(request, exc.status_code, code, str(exc.detail), headers=exc.headers)
 
 
+@app.exception_handler(IntegrityError)
+async def conflict(request: Request, exc: IntegrityError) -> JSONResponse:
+    # A unique or reference constraint refused the write (e.g. two concurrent creates).
+    return _error(request, 409, "conflict", "The request conflicts with existing data.")
+
+
+@app.exception_handler(DataError)
+async def invalid_value(request: Request, exc: DataError) -> JSONResponse:
+    # The database refused a value the schemas let through (out of range): the client's input.
+    return _error(request, 422, "invalid_value", "A value is out of the supported range.")
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     # Where and why only: the rejected input itself is not echoed back.
@@ -145,6 +158,44 @@ SECURITY_HEADERS = {
 }
 if production:  # production is HTTPS only (the platform terminates TLS)
     SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+
+class BodyLimit:
+    """Refuse request bodies over MAX_REQUEST_BODY_BYTES before they are read, let alone
+    parsed: FastAPI parses the body before authentication runs, so this also bounds what an
+    anonymous client can make the API hold in memory. Declared lengths are refused up front;
+    chunked bodies are counted while they stream in."""
+
+    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+        self.app, self.max_bytes = app, max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        declared = dict(scope["headers"]).get(b"content-length", b"0")
+        if not declared.isdigit() or int(declared) > self.max_bytes:
+            return await _too_large(scope, receive, send)
+        received = 0
+
+        async def counted() -> Message:
+            nonlocal received
+            message = await receive()
+            received += len(message.get("body", b""))
+            if received > self.max_bytes:  # surfaces through FastAPI's handler as a 413
+                raise HTTPException(413, "Request body too large.")
+            return message
+
+        await self.app(scope, counted, send)
+
+
+async def _too_large(scope: Scope, receive: Receive, send: Send) -> None:
+    request = Request(scope, receive)  # request_context (outside) already gave it a request id
+    await _error(request, 413, "payload_too_large", "Request body too large.")(scope, receive, send)
+
+
+# Inside request_context (added before it): the route reads the counted body directly, and
+# refusals carry the request id and security headers like every other response.
+app.add_middleware(BodyLimit, max_bytes=settings.max_request_body_bytes)
 
 
 @app.middleware("http")

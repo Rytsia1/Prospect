@@ -681,7 +681,7 @@ def test_storage_outage_is_a_generic_503(storage, monkeypatch):
 
 def test_filenames_are_display_text_only():
     headers, _ = user_session()
-    created = create(headers, filename="..\\..\\evil‮gpj.pdf\x00<i>").json()["document"]
+    created = create(headers, filename="..\\..\\evil\u202egpj.pdf\x00<i>").json()["document"]
     assert created["filename"] == "evilgpj.pdf<i>"  # rendered escaped by React
     key = storage_key(created["id"])
     assert key.startswith("uploads/") and "evil" not in key

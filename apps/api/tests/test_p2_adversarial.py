@@ -1,10 +1,9 @@
 """P2 adversarial security tests (docs/SECURITY_P2_AUDIT.md).
 
-Two kinds of test live here:
-- attacks that were tried and resisted: ordinary regression tests;
-- confirmed findings, not yet remediated: `xfail(strict=True)` tests that assert the SECURE
-  behaviour. They fail today (the evidence), and turn into an XPASS error the moment the fix
-  lands, so the marker must then be removed. Never "fix" one by weakening the assertion.
+Two kinds of test live here, both ordinary regression tests now:
+- attacks that were tried and resisted;
+- the confirmed findings P2-F1..F7, which were strict-xfail reproductions until P2.5 fixed them
+  (docs/SECURITY_P2_5.md). Each asserts the secure behaviour; never weaken one to pass.
 
 Everything is bounded and seeded (CI-safe). Needs TEST_DATABASE_URL (a migrated database).
 """
@@ -40,10 +39,6 @@ pytestmark = pytest.mark.skipif(
     not os.getenv("TEST_DATABASE_URL"), reason="TEST_DATABASE_URL not set"
 )
 client = TestClient(app, raise_server_exceptions=False)  # a 500 is a result, not a crash
-
-
-def finding(ref: str):
-    return pytest.mark.xfail(strict=True, reason=f"{ref}: open (docs/SECURITY_P2_AUDIT.md)")
 
 
 def parallel(n: int, call) -> list[int]:
@@ -196,12 +191,11 @@ def test_deleting_during_processing_never_resurrects_the_document(storage, repor
         assert s.get(Document, uuid.UUID(document)) is None
 
 
-@finding("P2-F7")
 def test_worker_handles_a_document_deleted_mid_processing(storage, report, monkeypatch):
     headers, _ = user_session()
     document = _start_processing(report, headers)
     _delete_while_parsing(monkeypatch, headers, document)
-    assert worker.process_next(storage) is True  # today: NoResultFound escapes process_next
+    assert worker.process_next(storage) is True  # was: NoResultFound escapes process_next
 
 
 # --- Malicious PDFs (bounded; resisted) -------------------------------------------------------
@@ -296,33 +290,30 @@ def test_hostile_pdf_ends_as_a_result_or_a_safe_rejection(name, tmp_path):
     assert time.monotonic() - started < 30
 
 
-# --- Confirmed findings (xfail until remediated) -----------------------------------------------
+# --- Confirmed findings (fixed in P2.5) -----------------------------------------------
 
 
-@finding("P2-F1")
 def test_oversized_request_bodies_are_refused_before_they_are_parsed():
     body = b'{"name": "' + b"a" * (8 * 1024 * 1024)  # 8 MiB, malformed on purpose, no session
     response = client.post(
         f"{API}/companies", content=body, headers={"Content-Type": "application/json"}
     )
-    # today: 422 json_invalid, i.e. read and decoded in full before authentication
+    # was: 422 json_invalid, i.e. read and decoded in full before authentication
     assert response.status_code in (401, 413)
 
 
-@finding("P2-F2")
 def test_free_text_fields_are_bounded():
     headers, _ = user_session()
     big = client.post(
         f"{API}/companies",
-        json={"name": uuid.uuid4().hex, "description": "a" * (2 * 1024 * 1024)},
+        json={"name": uuid.uuid4().hex, "description": "a" * 100_000},  # < body limit
         headers=headers,
     )
-    assert big.status_code == 422  # today: 201, stored and echoed back
+    assert big.status_code == 422  # was: 201, stored and echoed back
 
 
-@finding("P2-F2")
 def test_company_creation_is_rate_limited(tune):
-    tune(rate_limit_compute="5/60")  # the nearest existing bucket; any per-user bucket will do
+    tune(rate_limit_writes="5/60")
     headers, _ = user_session()
     statuses = {
         client.post(
@@ -330,10 +321,9 @@ def test_company_creation_is_rate_limited(tune):
         ).status_code
         for _ in range(10)
     }
-    assert 429 in statuses  # today: 10 × 201, no limit of any kind
+    assert 429 in statuses  # was: 10 × 201, no limit of any kind
 
 
-@finding("P2-F3")
 def test_scenario_cannot_reference_another_sessions_company(attacker):
     _, token = user_session()
     company = make_company(user_of(token), f"Victim {uuid.uuid4()}")
@@ -345,21 +335,19 @@ def test_scenario_cannot_reference_another_sessions_company(attacker):
         json=body | {"company_id": str(uuid.uuid4())},
         headers=attacker["headers"],
     )
-    # today: 201 (stored as given) vs 500 (foreign-key violation): an existence oracle
+    # was: 201 (stored as given) vs 500 (foreign-key violation): an existence oracle
     assert (foreign.status_code, unknown.status_code) == (404, 404)
 
 
-@finding("P2-F4")
 @pytest.mark.parametrize("fmt", ["csv", "json", "xlsx"])
 def test_export_of_a_non_latin_filename_succeeds(attacker, fmt):
     response = client.get(
         f"{API}/documents/{attacker['doc']}/export?format={fmt}", headers=attacker["headers"]
     )
-    assert response.status_code == 200  # today: 500 (header value not latin-1 encodable)
+    assert response.status_code == 200  # was: 500 (header value not latin-1 encodable)
     assert response.headers["content-disposition"].isascii()
 
 
-@finding("P2-F5")
 @pytest.mark.parametrize(
     ("method", "path", "body"),
     [
@@ -377,10 +365,9 @@ def test_hostile_values_are_rejected_not_a_server_error(attacker, method, path, 
     response = client.request(
         method, API + fill(path, ids), json=fill(body, ids), headers=attacker["headers"]
     )
-    assert response.status_code == 422  # today: 500
+    assert response.status_code == 422  # was: 500
 
 
-@finding("P2-F5")
 def test_uniqueness_races_and_conflicts_are_409_not_500():
     headers, _ = user_session()
     name = uuid.uuid4().hex
@@ -388,7 +375,7 @@ def test_uniqueness_races_and_conflicts_are_409_not_500():
     def create_company():
         return client.post(f"{API}/companies", json={"name": name}, headers=headers)
 
-    assert 500 not in parallel(8, create_company)  # today: IntegrityError → 500 for the losers
+    assert 500 not in parallel(8, create_company)  # was: IntegrityError → 500 for the losers
     company = client.post(f"{API}/companies", json={"name": "W" + name}, headers=headers).json()
 
     def watch():
@@ -399,7 +386,6 @@ def test_uniqueness_races_and_conflicts_are_409_not_500():
     assert rename.status_code == 409
 
 
-@finding("P2-F6")
 def test_concurrent_data_quality_reads_do_not_duplicate_issues(storage, report, monkeypatch):
     headers, _ = user_session()
     document = ready_document(storage, headers, report)
@@ -420,14 +406,14 @@ def test_concurrent_data_quality_reads_do_not_duplicate_issues(storage, report, 
             .where(DataQualityIssue.document_id == uuid.UUID(document))
             .group_by(DataQualityIssue.rule_type, DataQualityIssue.metric, DataQualityIssue.period)
         )
-        assert set(per_key) <= {1}  # today: the same issue stored several times
+        assert set(per_key) <= {1}  # was: the same issue stored several times
 
 
 # --- Bounded fuzzing --------------------------------------------------------------------------
 
 FUZZ_VALUES = [
     "", "a" * 5000, "<img src=x onerror=alert(1)>", "\"><svg/onload=alert(1)>", "javascript:x",
-    "=cmd|' /C calc'!A0", "../../etc/passwd", "\x1b[31m‮", "FY2025", "IDR", 0, -1, 2**63,
+    "=cmd|' /C calc'!A0", "../../etc/passwd", "\x1b[31m\u202e", "FY2025", "IDR", 0, -1, 2**63,
     10**40, 1.5e308, -0.0, True, None, [], [1] * 50, {}, {"a": {"b": [None]}}, "NaN", "Infinity",
     str(uuid.UUID(int=0)), "not-a-uuid", "accepted", "RESOLVED", "millions",
 ]  # fmt: skip

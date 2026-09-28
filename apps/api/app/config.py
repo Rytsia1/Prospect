@@ -38,6 +38,12 @@ class Settings(BaseSettings):
         "http://localhost:3000", validation_alias=AliasChoices("ALLOWED_ORIGINS", "CORS_ORIGINS")
     )
     log_level: str = "INFO"
+    # Largest request body the API reads (JSON only: PDFs go straight to storage). Checked before
+    # the body is read or parsed, so it also bounds unauthenticated requests.
+    max_request_body_bytes: int = Field(1_048_576, ge=1024)
+    # Every database statement is cancelled after this (a runaway query cannot hold a connection
+    # or lock forever). The worker's bulk insert of a large document is well inside it.
+    db_statement_timeout_ms: int = Field(30_000, ge=1000)
 
     # --- Storage ---------------------------------------------------------------------------
     object_storage_endpoint: str
@@ -65,6 +71,7 @@ class Settings(BaseSettings):
     rate_limit_financials: str = "60/60"
     rate_limit_compute: str = "30/60"  # diff, scenario preview, data quality
     rate_limit_export: str = "10/60"
+    rate_limit_writes: str = "60/60"  # creating companies, scenarios, watchlist entries
     # Per client IP as well, so opening new anonymous sessions does not reset the limits.
     rate_limit_sessions_daily: str = "50/86400"
     rate_limit_uploads_ip: str = "60/3600"
@@ -86,6 +93,15 @@ class Settings(BaseSettings):
     processing_max_attempts: int = 3
     processing_retry_base_seconds: float = 30  # doubles each attempt, plus up to 50% jitter
     processing_lease_seconds: int = 900  # a RUNNING job older than this is reclaimed
+    # PDF objects (xref entries) a document may declare; far above real annual reports.
+    processing_max_objects: int = 500_000
+    # Largest parse result the parser child may hand back; it is also the child's file-size
+    # limit (RLIMIT_FSIZE), i.e. the most it can write to disk.
+    processing_max_result_bytes: int = 256 * 1024**2
+    # The parser child's network: required = parse only inside an empty network namespace (Linux
+    # with unprivileged user namespaces); best_effort = use one when the host allows it and log
+    # when not; off = never try (development on other systems). Production may not use off.
+    processing_network_isolation: Literal["required", "best_effort", "off"] = "best_effort"
 
     # --- Quotas (per user) -----------------------------------------------------------------
     quota_max_documents: int = 100
@@ -94,6 +110,8 @@ class Settings(BaseSettings):
     quota_max_daily_jobs: int = 50
     # Across all users: queued + running jobs. New sessions cannot flood the queue past it.
     quota_max_queued_jobs: int = 500
+    quota_max_companies: int = 100
+    quota_max_scenarios: int = 200
 
     # --- Threat scanning and retention -----------------------------------------------------
     # clamav: scan every PDF with clamd before parsing; none: documents are not scanned (and are
@@ -145,6 +163,7 @@ class Settings(BaseSettings):
         "rate_limit_financials",
         "rate_limit_compute",
         "rate_limit_export",
+        "rate_limit_writes",
         "rate_limit_sessions_daily",
         "rate_limit_uploads_ip",
         "rate_limit_complete_ip",
@@ -177,6 +196,8 @@ class Settings(BaseSettings):
                 raise ValueError("ALLOWED_ORIGINS must be https:// origins in production")
             if not self.session_cookie_secure:
                 raise ValueError("SESSION_COOKIE_SECURE must be true in production")
+            if self.processing_network_isolation == "off":
+                raise ValueError("PROCESSING_NETWORK_ISOLATION cannot be off in production")
             if self.document_scanner is None:
                 raise ValueError(
                     "DOCUMENT_SCANNER must be set in production: clamav, or none to accept "

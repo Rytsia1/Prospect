@@ -312,7 +312,8 @@ def export_financials(
     )
     stem = view.company_name if view.scope == "company" else view.documents[0].filename
     name = f"prospect-{(stem or 'export').rsplit('.pdf', 1)[0]}.{format}"
-    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in name)
+    # ASCII only: header values must be Latin-1, and isalnum() alone admits every script.
+    safe = "".join(c if (c.isascii() and c.isalnum()) or c in "-_." else "_" for c in name)
     return Response(
         body,
         media_type=media_type,

@@ -12,11 +12,13 @@ with exponential backoff and jitter, up to PROCESSING_MAX_ATTEMPTS. A job whose 
 reclaimed once its lease expires, so a document never stays in PROCESSING indefinitely.
 """
 
+import ctypes
 import hashlib
 import logging
 import os
 import random
 import signal
+import sys
 import tempfile
 import threading
 import time
@@ -69,6 +71,9 @@ POLL_SECONDS = 2.0
 SWEEP_SECONDS = 300.0  # cleanup cadence (abandoned uploads, orphaned objects, stale counters)
 RECONCILE_SECONDS = 86_400.0  # storage/database reconciliation (app/reconcile.py), daily
 INTERNAL_ERROR = "Document processing failed."
+
+
+PR_SET_DUMPABLE = 4  # linux/prctl.h
 
 
 def claim_job(session: Session) -> ProcessingJob | None:
@@ -145,6 +150,7 @@ def process_next(storage: ObjectStorage, scanner: DocumentScanner | None = None)
         max_facts=settings.processing_max_facts,
         max_evidence=settings.processing_max_evidence,
         max_row_chars=settings.processing_max_row_chars,
+        max_objects=settings.processing_max_objects,
     )
     started = time.perf_counter()
     log.info("processing started", extra={"fields": fields})
@@ -171,6 +177,8 @@ def process_next(storage: ObjectStorage, scanner: DocumentScanner | None = None)
                 (path, limits),
                 settings.processing_timeout_seconds,
                 settings.processing_max_memory_bytes,
+                max_result_bytes=settings.processing_max_result_bytes,
+                network=settings.processing_network_isolation,
             )
         _store(job_id, document_id, analysis)
     except ProcessingTimeout as e:
@@ -190,6 +198,9 @@ def process_next(storage: ObjectStorage, scanner: DocumentScanner | None = None)
         log.warning("processing rejected document", extra={"fields": fields | {"reason": str(e)}})
         reason = "rejected_document"
     except Exception as e:  # infrastructure (storage, database, scanner): retried, boundedly
+        if _deleted(document_id):  # its owner deleted it meanwhile: nothing left to do
+            log.info("document deleted during processing", extra={"fields": fields})
+            return True
         if isinstance(e, ScannerUnavailable):
             security_event("threat_scan_unavailable", **fields, reason=str(e))
         else:
@@ -401,7 +412,9 @@ def _fail(job_id: uuid.UUID, document_id: uuid.UUID, reason: str) -> None:
     """Permanent failure. `reason` is user-safe; details are only in the logs. The stored PDF
     is deleted by the next sweep (nothing will read it again)."""
     with SessionLocal() as session, session.begin():
-        job = session.get_one(ProcessingJob, job_id)
+        job = session.get(ProcessingJob, job_id)
+        if job is None:  # deleted with its document meanwhile
+            return
         job.status = JobStatus.FAILED
         job.last_error = reason
         job.locked_at = None
@@ -411,9 +424,16 @@ def _fail(job_id: uuid.UUID, document_id: uuid.UUID, reason: str) -> None:
         document.processing_error = reason  # user-safe: ProcessingError text or a generic message
 
 
+def _deleted(document_id: uuid.UUID) -> bool:
+    with SessionLocal() as session:
+        return session.get(Document, document_id) is None
+
+
 def _requeue(job_id: uuid.UUID, document_id: uuid.UUID, attempts: int) -> None:
     with SessionLocal() as session, session.begin():
-        job = session.get_one(ProcessingJob, job_id)
+        job = session.get(ProcessingJob, job_id)
+        if job is None:  # deleted with its document meanwhile
+            return
         job.status = JobStatus.QUEUED
         job.last_error = INTERNAL_ERROR
         job.locked_at = None
@@ -580,6 +600,10 @@ def main() -> None:
         log.warning("worker holds APP_SECRET; it never needs it. Remove it from this service.")
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         log.warning("worker runs as root; run it as an unprivileged user")
+    if sys.platform == "linux":
+        # Not dumpable: the parser child (same OS user) cannot read this process's environment
+        # (/proc/<pid>/environ) or memory, where the database and storage credentials live.
+        ctypes.CDLL(None).prctl(PR_SET_DUMPABLE, 0, 0, 0, 0)
     storage = get_storage()
     log.info("worker started")
     next_sweep = next_reconcile = 0.0

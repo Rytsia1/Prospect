@@ -27,6 +27,7 @@ class Limits:
     max_facts: int
     max_evidence: int
     max_row_chars: int
+    max_objects: int | None = None
 
 
 @dataclass
@@ -46,6 +47,7 @@ def analyze(job: tuple[Path, Limits]) -> Analysis:
         max_pages=limits.max_pages,
         max_text_bytes=limits.max_text_bytes,
         max_table_cells=limits.max_table_cells,
+        max_objects=limits.max_objects,
     )
     sections, assignment = detect_sections(pages)
     chunks = chunk_pages(pages, assignment)

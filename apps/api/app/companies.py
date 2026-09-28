@@ -7,17 +7,23 @@ associated documents without duplicating facts.
 
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app import quotas
 from app.audit import record_audit_event
-from app.auth import CurrentUserId
+from app.auth import CurrentUserId, limit_user
+from app.config import get_settings
 from app.documents import (
     DbSession,
     DocumentOut,
+    Line,
+    Paragraph,
+    ShortLine,
     _owned_document,
 )
 from app.errors import ApiError
@@ -34,19 +40,19 @@ router = APIRouter(prefix="/companies", tags=["companies"])
 
 
 class CompanyCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    ticker: str | None = Field(default=None, max_length=20)
-    country: str | None = Field(default=None, max_length=50)
-    currency: str | None = Field(default=None, min_length=3, max_length=3)
-    description: str | None = None
+    name: Annotated[Line, Field(min_length=1)]
+    ticker: Annotated[ShortLine, Field(max_length=20)] | None = None
+    country: Annotated[Line, Field(max_length=50)] | None = None
+    currency: Annotated[ShortLine, Field(min_length=3, max_length=3)] | None = None
+    description: Paragraph | None = None
 
 
 class CompanyUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=200)
-    ticker: str | None = Field(default=None, max_length=20)
-    country: str | None = Field(default=None, max_length=50)
-    currency: str | None = Field(default=None, min_length=3, max_length=3)
-    description: str | None = None
+    name: Annotated[Line, Field(min_length=1)] | None = None
+    ticker: Annotated[ShortLine, Field(max_length=20)] | None = None
+    country: Annotated[Line, Field(max_length=50)] | None = None
+    currency: Annotated[ShortLine, Field(min_length=3, max_length=3)] | None = None
+    description: Paragraph | None = None
 
 
 class CompanySummaryOut(BaseModel):
@@ -94,11 +100,15 @@ def _owned_company(session: Session, user_id: uuid.UUID, company_id: uuid.UUID) 
     return company
 
 
-@router.post("", response_model=CompanySummaryOut, status_code=201)
+@router.post(
+    "", response_model=CompanySummaryOut, status_code=201, dependencies=[limit_user("writes")]
+)
 def create_company(
-    body: CompanyCreate, user_id: CurrentUserId, session: DbSession
+    request: Request, body: CompanyCreate, user_id: CurrentUserId, session: DbSession
 ) -> CompanySummaryOut:
     """Create a company research workspace."""
+    limit = get_settings().quota_max_companies
+    quotas.check_count(request, session, user_id, Company, limit, "companies")
     clean_name = " ".join(body.name.split())
     existing = session.scalar(
         select(Company).where(

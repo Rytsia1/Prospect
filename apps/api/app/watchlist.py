@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from app.analytics import CONTEXT
 from app.audit import record_audit_event
-from app.auth import CurrentUserId
+from app.auth import CurrentUserId, limit_user
 from app.documents import (
     DbSession,
     DecimalStr,
@@ -156,7 +156,9 @@ def get_watchlist(user_id: CurrentUserId, session: DbSession) -> list[WatchlistC
     return items
 
 
-@router.post("", response_model=WatchlistCompanyOut, status_code=201)
+@router.post(
+    "", response_model=WatchlistCompanyOut, status_code=201, dependencies=[limit_user("writes")]
+)
 def add_to_watchlist(
     body: AddWatchlistRequest, user_id: CurrentUserId, session: DbSession
 ) -> WatchlistCompanyOut:

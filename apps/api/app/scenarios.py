@@ -5,23 +5,29 @@ Distinguishes scenarios from reported base facts.
 Includes source evidence links and disclaimers.
 """
 
+import json
 import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Query
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Query, Request
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import quotas
 from app.analytics import CONTEXT
 from app.audit import record_audit_event
 from app.auth import CurrentUserId, limit_user
+from app.companies import _owned_company
+from app.config import get_settings
 from app.documents import (
     DbSession,
     DecimalStr,
     EvidenceOut,
+    Line,
+    ShortLine,
     _facts,
     _owned_document,
 )
@@ -64,9 +70,20 @@ class ScenarioCalculationPreview(BaseModel):
     disclaimer: str = SCENARIO_DISCLAIMER
 
 
+def _small_json(value: dict | None) -> dict | None:
+    if value is not None and len(json.dumps(value)) > ASSUMPTIONS_MAX_BYTES:
+        raise ValueError(f"must be at most {ASSUMPTIONS_MAX_BYTES} bytes as JSON")
+    return value
+
+
+ASSUMPTIONS_MAX_BYTES = 10_000
+Assumptions = Annotated[dict | None, AfterValidator(_small_json)]
+Margin = Annotated[Decimal, Field(ge=Decimal("-1.0"), le=Decimal("1.0"))]
+
+
 class ScenarioCalculateRequest(BaseModel):
     document_id: uuid.UUID
-    base_period: str = Field(description="e.g. FY2025")
+    base_period: ShortLine = Field(description="e.g. FY2025")
     growth_adjustment: Decimal = Field(
         default=Decimal("0.0"),
         ge=Decimal("-0.99"),
@@ -90,22 +107,20 @@ class ScenarioCalculateRequest(BaseModel):
 class ScenarioCreateRequest(BaseModel):
     document_id: uuid.UUID | None = None
     company_id: uuid.UUID | None = None
-    name: str = Field(min_length=1, max_length=200)
-    base_period: str
+    name: Annotated[Line, Field(min_length=1)]
+    base_period: ShortLine
     growth_adjustment: Decimal = Field(ge=Decimal("-0.99"), le=Decimal("5.0"))
-    margin_adjustment: Decimal = Field(
-        default=Decimal("0.0"), ge=Decimal("-1.0"), le=Decimal("1.0")
-    )
-    target_margin: Decimal | None = None
-    assumptions: dict | None = None
+    margin_adjustment: Margin = Decimal("0.0")
+    target_margin: Margin | None = None
+    assumptions: Assumptions = None
 
 
 class ScenarioUpdateRequest(BaseModel):
-    name: str | None = Field(default=None, max_length=200)
+    name: Line | None = None
     growth_adjustment: Decimal | None = Field(default=None, ge=Decimal("-0.99"), le=Decimal("5.0"))
-    margin_adjustment: Decimal | None = Field(default=None, ge=Decimal("-1.0"), le=Decimal("1.0"))
-    target_margin: Decimal | None = None
-    assumptions: dict | None = None
+    margin_adjustment: Margin | None = None
+    target_margin: Margin | None = None
+    assumptions: Assumptions = None
 
 
 class ScenarioOut(BaseModel):
@@ -146,11 +161,19 @@ def _get_base_financials(
             f"Base Revenue fact is required for period '{period}' but was not found in document.",
         )
 
+    # Never a silent zero (AGENTS.md rule 18): a missing net income or a zero revenue leaves the
+    # base margin undefined, so there is no scenario to compute.
+    if not ni_fact:
+        raise ApiError(
+            422,
+            "missing_base_fact",
+            f"Base Net income fact is required for period '{period}' but was not found.",
+        )
+    if rev_fact.value == 0:
+        raise ApiError(422, "undefined_margin", "Base revenue is zero, so the margin is undefined.")
     base_revenue = rev_fact.value
-    base_net_income = ni_fact.value if ni_fact else Decimal(0)
-    base_net_margin = (
-        CONTEXT.divide(base_net_income, base_revenue) if base_revenue != 0 else Decimal(0)
-    )
+    base_net_income = ni_fact.value
+    base_net_margin = CONTEXT.divide(base_net_income, base_revenue)
 
     base_fact_items = [
         BaseFactItem(
@@ -231,8 +254,9 @@ def calculate_scenario_preview(
     )
 
 
-@router.post("", response_model=ScenarioOut, status_code=201)
+@router.post("", response_model=ScenarioOut, status_code=201, dependencies=[limit_user("writes")])
 def create_scenario(
+    request: Request,
     body: ScenarioCreateRequest,
     user_id: CurrentUserId,
     session: DbSession,
@@ -240,6 +264,10 @@ def create_scenario(
     """Save a user-defined scenario."""
     if not body.document_id and not body.company_id:
         raise ApiError(422, "missing_target", "Either document_id or company_id must be provided")
+    if body.company_id:  # every id the client names is owned, not only the document's
+        _owned_company(session, user_id, body.company_id)
+    limit = get_settings().quota_max_scenarios
+    quotas.check_count(request, session, user_id, Scenario, limit, "scenarios")
 
     target_doc_id = body.document_id
     if not target_doc_id and body.company_id:
@@ -289,7 +317,7 @@ def create_scenario(
 
     scenario = Scenario(
         user_id=user_id,
-        document_id=body.document_id,
+        document_id=target_doc_id,  # the facts' source: deleting it deletes the scenario
         company_id=body.company_id,
         name=body.name,
         base_period=body.base_period,

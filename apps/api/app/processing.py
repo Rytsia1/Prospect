@@ -125,6 +125,7 @@ def parse_pdf(
     max_pages: int | None = None,
     max_text_bytes: int | None = None,
     max_table_cells: int | None = None,
+    max_objects: int | None = None,
 ) -> list[ParsedPage]:
     """Parse a PDF within limits (None = unlimited). Run untrusted files via app/sandbox.py."""
     try:
@@ -137,6 +138,11 @@ def parse_pdf(
             raise ProcessingError("The file is not a valid PDF.")
         if doc.needs_pass:
             raise ProcessingError("The PDF is password-protected.")
+        # Checked before any page is loaded: an object flood costs memory and time even when
+        # the pages themselves are small. Only text is ever read: no JavaScript is run, no
+        # annotation, attachment, form or link is followed, and images are listed, not decoded.
+        if max_objects is not None and doc.xref_length() > max_objects:
+            raise ProcessingLimitError(f"The PDF has more than {max_objects} objects.")
         if doc.page_count == 0:
             raise ProcessingError("The PDF has no pages.")
         if max_pages is not None and doc.page_count > max_pages:

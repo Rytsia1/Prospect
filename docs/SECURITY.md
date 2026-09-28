@@ -154,9 +154,10 @@ deployment task.
 ## 5. Processing limits
 
 The worker downloads the PDF to a temporary directory (deleted after every attempt), then runs
-`app/pipeline.analyze` in a fresh child process (`multiprocessing` spawn). The parent waits at
-most `PROCESSING_TIMEOUT_SECONDS` and kills the child. On Linux the child also has an address-space
-cap (`PROCESSING_MAX_MEMORY_BYTES`, `RLIMIT_AS`). The API process never parses PDFs.
+`app/pipeline.analyze` in a fresh, secret-free child process (`app/sandbox.py`; the boundary is
+described in docs/SECURITY_P2_5.md). The parent waits at most `PROCESSING_TIMEOUT_SECONDS` and
+kills the child. On Linux the child also has an address-space cap (`PROCESSING_MAX_MEMORY_BYTES`,
+`RLIMIT_AS`), a CPU-time cap and a file-size cap. The API process never parses PDFs.
 
 | Setting | Default | Exceeded → |
 |---|---|---|
@@ -167,6 +168,9 @@ cap (`PROCESSING_MAX_MEMORY_BYTES`, `RLIMIT_AS`). The API process never parses P
 | `PROCESSING_MAX_TABLE_CELLS` | 500,000 | FAILED (checked before cells are read) |
 | `PROCESSING_MAX_FACTS` / `PROCESSING_MAX_EVIDENCE` | 5,000 | FAILED (never a truncated subset) |
 | `PROCESSING_MAX_ROW_CHARS` | 2,000 | row ignored as evidence |
+| `PROCESSING_MAX_OBJECTS` | 500,000 | FAILED (checked before any page loads) |
+| `PROCESSING_MAX_RESULT_BYTES` | 256 MiB | FAILED; also the child's file-size limit (Linux) |
+| `PROCESSING_NETWORK_ISOLATION` | best_effort | `required`: FAILED when no empty network namespace |
 
 **Retries.** Failures caused by the document (unreadable, over a limit, timeout, crash, checksum,
 infected) are permanent. Infrastructure errors (storage, database, scanner) are retried up to
@@ -440,6 +444,8 @@ replacing `run_isolated(analyze, …)` in `app/worker.py`; nothing in the API ch
 | Requirement | Status |
 |---|---|
 | Parse in a separate, killable process with a wall-clock timeout | **enforced** (`app/sandbox.py`) |
+| Parser process holds no secrets | **enforced** (P2.5): started with an allowlisted environment, never loads settings; the worker is non-dumpable on Linux so the child cannot read its environment or memory |
+| Parser output cannot run code in the worker | **enforced** (P2.5): size-capped result file, allowlist unpickler |
 | Memory limit | **enforced** on Linux (`RLIMIT_AS`); also set the service memory limit |
 | CPU limit | **enforced** on Linux (`RLIMIT_CPU` = timeout + 5 s) |
 | No core dumps of document contents | **enforced** on Linux (`RLIMIT_CORE` = 0) |
@@ -448,10 +454,10 @@ replacing `run_isolated(analyze, …)` in `app/worker.py`; nothing in the API ch
 | Non-root execution | **not enforced**: logged as a warning; configure the service user |
 | Ephemeral, read-only application filesystem | **not enforced**: platform configuration |
 | Minimal storage permission | **not enforced**: use a token limited to this bucket (read, write, delete; no bucket admin) |
-| Minimal database permission | **not enforced**: the worker uses the API's database role; a restricted role is future work |
-| No unnecessary network access | **not enforced**: the parser child could open connections; needs container egress rules |
+| Minimal database permission | **provided, not applied**: `apps/api/deploy/db_roles.sql` (DML only, no DDL; tested); apply it when provisioning |
+| No unnecessary network access | **partly enforced** (P2.5): the parser child gets an empty network namespace where the host allows unprivileged user namespaces (`PROCESSING_NETWORK_ISOLATION=required` refuses to parse otherwise); the worker itself still needs egress to the database, storage and clamd |
 | Process/PID limit | **not enforced** (`RLIMIT_NPROC` is per user, unsafe to set in-process) |
-| Code-execution isolation | **not provided**: the child shares the worker's environment and credentials. A PyMuPDF exploit reaches them. This is P2 scope (a parse-only container with no secrets, gVisor/Firecracker) |
+| Code-execution isolation | **partial** (P2.5): the child has no credentials and (where available) no network, but runs as the worker's OS user on the same kernel and filesystem. Full isolation needs a separate parse-only runtime (gVisor/Firecracker/container without secrets): docs/SECURITY_P2_5.md §4 |
 
 ## 16. Authorization matrix (anonymous sessions)
 

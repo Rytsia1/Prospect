@@ -19,6 +19,7 @@ for key, value in {
     "RATE_LIMIT_FINANCIALS": "100000/60",
     "RATE_LIMIT_COMPUTE": "100000/60",
     "RATE_LIMIT_EXPORT": "100000/60",
+    "RATE_LIMIT_WRITES": "100000/60",
     "RATE_LIMIT_SESSIONS_DAILY": "100000/60",
     "RATE_LIMIT_UPLOADS_IP": "100000/60",
     "RATE_LIMIT_COMPLETE_IP": "100000/60",
@@ -26,6 +27,8 @@ for key, value in {
     "QUOTA_MAX_ACTIVE_JOBS": "100000",
     "QUOTA_MAX_DAILY_JOBS": "100000",
     "QUOTA_MAX_QUEUED_JOBS": "100000",
+    "QUOTA_MAX_COMPANIES": "100000",
+    "QUOTA_MAX_SCENARIOS": "100000",
 }.items():
     os.environ.setdefault(key, value)
 

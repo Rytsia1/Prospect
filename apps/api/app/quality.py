@@ -21,12 +21,14 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import quotas
 from app.analytics import CONTEXT
 from app.audit import record_audit_event
 from app.auth import CurrentUserId, limit_user
 from app.documents import (
     DbSession,
     FactOut,
+    Paragraph,
     _facts,
 )
 from app.errors import ApiError
@@ -76,7 +78,7 @@ class DataQualityResponse(BaseModel):
 
 class UpdateAnomalyStatusRequest(BaseModel):
     status: AnomalyStatus
-    reason: str | None = None
+    reason: Paragraph | None = None
 
 
 def detect_document_anomalies(
@@ -303,7 +305,9 @@ def get_data_quality(
     # Detect issues deterministically
     fresh_issues = detect_document_anomalies(session, user_id, docs)
 
-    # Sync fresh issues into DB if not present
+    # Sync fresh issues into DB if not present. The user-row lock serializes this
+    # check-then-insert, so concurrent reads cannot store the same issue twice.
+    quotas.lock_user(session, user_id)
     existing = list(
         session.scalars(select(DataQualityIssue).where(DataQualityIssue.user_id == user_id)).all()
     )

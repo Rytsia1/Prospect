@@ -13,6 +13,15 @@ Every finding has a reproduction in [`apps/api/tests/test_p2_adversarial.py`](..
 
 The testing was local only: PostgreSQL, moto S3, and `next dev` against a request-logging stub. It never touched real R2, Vercel or any other external system.
 
+> **Status after P2.5 (2026-09-28):** P2-F1…F7 are fixed. Their tests in
+> `test_p2_adversarial.py` now pass as ordinary regression tests.
+> - I1 (pickle channel) and I2 (mutable CI image tag) are fixed.
+> - I5 is fixed: control characters are now refused in all free text.
+> - I4 is reduced: reflected values are bounded to 40 characters.
+> - I3, I6 and I7 are unchanged.
+>
+> See [SECURITY_P2_5.md](SECURITY_P2_5.md).
+
 ## 1. Summary
 
 | | |

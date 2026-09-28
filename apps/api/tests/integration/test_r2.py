@@ -16,8 +16,9 @@ from the environment only; never commit them.
 
 import hashlib
 import os
+import time
 import uuid
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 import pytest
@@ -92,3 +93,56 @@ def test_object_changed_after_upload_is_visible_to_verification(r2, key):
     stat = r2.stat(key)
     assert stat is not None and stat.sha256 != sha
     assert hashlib.sha256(r2.download(key)).hexdigest() != sha  # what the worker computes
+
+
+# --- Signed-URL and bucket-privacy enforcement (P2.5) ------------------------------------------
+
+
+@pytest.fixture
+def stored(r2, key):
+    r2.upload(key, PDF, "application/pdf")
+    return key
+
+
+def test_expired_download_url_is_refused(r2, stored):
+    url = r2.signed_download_url(stored, 1)
+    time.sleep(3)
+    assert httpx.get(url, timeout=30).status_code == 403
+
+
+def test_tampered_download_url_is_refused(r2, stored):
+    url = r2.signed_download_url(stored, 60)
+    parts = urlparse(url)
+    query = parse_qsl(parts.query)
+    tampered = [(k, v[:-1] + ("0" if v[-1] != "0" else "1")) if k == "X-Amz-Signature" else (k, v)
+                for k, v in query]  # fmt: skip
+    assert (
+        httpx.get(urlunparse(parts._replace(query=urlencode(tampered))), timeout=30).status_code
+        == 403
+    )
+    longer = [(k, "3600") if k == "X-Amz-Expires" else (k, v) for k, v in query]
+    assert (
+        httpx.get(urlunparse(parts._replace(query=urlencode(longer))), timeout=30).status_code
+        == 403
+    )
+
+
+def test_signed_urls_allow_only_their_method(r2, stored):
+    sha = hashlib.sha256(PDF).hexdigest()
+    upload = r2.signed_upload_url(stored, "application/pdf", len(PDF), sha, 60)
+    download = r2.signed_download_url(stored, 60)
+    assert httpx.get(upload, timeout=30).status_code == 403
+    assert httpx.delete(upload, timeout=30).status_code == 403
+    assert httpx.delete(download, timeout=30).status_code == 403
+    assert httpx.put(download, content=PDF, timeout=30).status_code == 403
+    assert r2.stat(stored) is not None  # nothing above changed it
+
+
+def test_bucket_is_private_and_not_listable(stored):
+    endpoint, bucket = os.environ["R2_ENDPOINT"].rstrip("/"), os.environ["R2_BUCKET"]
+    for url in (
+        f"{endpoint}/{bucket}/{stored}",
+        f"{endpoint}/{bucket}",
+        f"{endpoint}/{bucket}?list-type=2",
+    ):
+        assert httpx.get(url, timeout=30).status_code in (400, 401, 403), url

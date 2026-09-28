@@ -16,7 +16,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Path, Query, Request
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import quotas
@@ -27,9 +27,11 @@ from app.db import get_session
 from app.errors import ApiError
 from app.logs import audit_event, security_event
 from app.models import (
+    AuditEvent,
     Calculation,
     CalculationInput,
     CalculationStatus,
+    DataQualityIssue,
     Document,
     DocumentPage,
     DocumentSection,
@@ -42,6 +44,7 @@ from app.models import (
     PageExtractionStatus,
     PeriodType,
     ProcessingJob,
+    Scenario,
 )
 from app.models import (
     DocumentSection as SectionRow,
@@ -58,12 +61,45 @@ DbSession = Annotated[Session, Depends(get_session)]
 Storage = Annotated[ObjectStorage, Depends(get_storage)]
 
 
+def _line_or_none(text: str | None) -> str | None:
+    return None if text is None else _line(text)
+
+
 def _company(name: str | None) -> str | None:
     """Collapse whitespace; blank means no company."""
     return (" ".join(name.split()) or None) if name is not None else None
 
 
-CompanyName = Annotated[str | None, Field(max_length=200), AfterValidator(_company)]
+# Bidi embeddings, overrides and isolates: they make displayed text read differently.
+_BIDI_CONTROLS = frozenset(map(chr, (*range(0x202A, 0x202F), *range(0x2066, 0x206A))))
+
+
+def _plain(text: str, newlines: bool) -> str:
+    """Refuse control characters (NUL, ESC, ...) and bidi overrides in user text. Refused, not
+    stripped: the user sees exactly what is stored."""
+    allowed = "\n\t" if newlines else ""
+    if any(
+        (unicodedata.category(c) == "Cc" and c not in allowed) or c in _BIDI_CONTROLS for c in text
+    ):
+        raise ValueError("must not contain control characters")
+    return text
+
+
+def _line(text: str) -> str:
+    return _plain(text, newlines=False)
+
+
+def _paragraph(text: str) -> str:
+    return _plain(text.replace("\r\n", "\n"), newlines=True)
+
+
+# Bounded, control-character-free user text for every free-text field (docs/SECURITY_P2_5.md).
+Line = Annotated[str, Field(max_length=200), AfterValidator(_line)]
+ShortLine = Annotated[str, Field(max_length=40), AfterValidator(_line)]
+Paragraph = Annotated[str, Field(max_length=2000), AfterValidator(_paragraph)]
+CompanyName = Annotated[
+    str | None, Field(max_length=200), AfterValidator(_company), AfterValidator(_line_or_none)
+]
 FILENAME_MAX = 255
 
 
@@ -414,15 +450,34 @@ def update_document(
 
 def remove_document(session: Session, storage: ObjectStorage, document: Document) -> None:
     """Delete the stored file, then the row; its pages, sections, chunks, evidence, facts,
-    calculations, jobs, reviews, quality issues, comparisons and document-based scenarios go with
-    it (ON DELETE CASCADE). Companies, watchlists and the audit trail are not document data and
-    stay.
+    calculations, jobs, reviews, quality issues, comparisons and scenarios built on it go with it
+    (ON DELETE CASCADE), and so do the audit events that copied its content. Companies,
+    watchlists and metadata-only security events are not document data and stay.
 
     Storage first: if that fails nothing has changed and the delete can simply be retried; if
     the database step fails afterwards, the row still exists and retrying finishes the job
     (deleting a missing object succeeds). Exports are never stored, so there is none to delete.
     """
     storage.delete(document.storage_key)
+    # Review, scenario and workspace events copy document data into the audit trail (filenames,
+    # before/after values, scenario results, reasons): those rows go with the document. The
+    # metadata-only security events (app/logs.audit_event, marked by their "result" key: ids,
+    # counts, outcomes, no content) stay, as the record of what happened to it.
+    derived = [
+        select(cast(model.id, String)).where(model.document_id == document.id)
+        for model in (FinancialFact, Scenario, DataQualityIssue)
+    ]
+    session.execute(
+        delete(AuditEvent).where(
+            AuditEvent.user_id == document.user_id,
+            ~AuditEvent.metadata_json.has_key("result"),
+            or_(
+                AuditEvent.entity_id == str(document.id),
+                AuditEvent.metadata_json["document_id"].astext == str(document.id),
+                *(AuditEvent.entity_id.in_(ids) for ids in derived),
+            ),
+        )
+    )
     session.delete(document)
     session.commit()
 

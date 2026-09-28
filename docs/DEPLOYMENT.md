@@ -35,7 +35,13 @@ Enable:
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-Run migrations.
+Run migrations, as the database owner, from the deploy step only.
+
+Then create the least-privilege service roles (`apps/api/deploy/db_roles.sql`, as the owner):
+one `LOGIN` role per service in the `prospect_app` group, each with its own generated password.
+The API and the worker get their own `DATABASE_URL` with their own role; neither gets the owner.
+Set a connection limit per role (`ALTER ROLE … CONNECTION LIMIT n`) sized to the service's pool
+(SQLAlchemy default: 5 + 10 overflow per process).
 
 ### Step 2 — Object Storage
 
@@ -98,7 +104,13 @@ Deploy the document-processing worker.
 The worker must use the same database and object-storage credentials, and must NOT be given
 `APP_SECRET` or `TRUSTED_PROXY_SECRET` (it needs neither and warns if it holds `APP_SECRET`).
 Also set `CLAMAV_HOST`/`CLAMAV_PORT`, a service memory limit, and a non-root user
-(docs/SECURITY.md §15).
+(docs/SECURITY.md §15). Give it its own database role (Step 1) and its own storage token.
+
+Parser isolation (docs/SECURITY_P2_5.md §4): the parser child runs without any secret already.
+Check the worker's log for `parser runs without network isolation`. If it appears, the host
+blocks unprivileged user namespaces; either allow them (then set
+`PROCESSING_NETWORK_ISOLATION=required`) or restrict the worker's egress at the platform to the
+database, storage and clamd hosts.
 
 Verify:
 

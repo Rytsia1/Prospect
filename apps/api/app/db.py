@@ -11,7 +11,13 @@ class Base(DeclarativeBase):
 
 
 # hide_parameters: database errors in the logs never carry row values (evidence text, facts).
-engine = create_engine(get_settings().database_url, pool_pre_ping=True, hide_parameters=True)
+# statement_timeout: every statement, on every connection (docs/SECURITY_P2_5.md §7).
+engine = create_engine(
+    get_settings().database_url,
+    pool_pre_ping=True,
+    hide_parameters=True,
+    connect_args={"options": f"-c statement_timeout={get_settings().db_statement_timeout_ms}"},
+)
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 
