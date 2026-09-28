@@ -163,6 +163,19 @@ export function Upload({ onUploaded }: { onUploaded: () => void }) {
         </span>
       </label>
 
+      <p className="text-xs text-slate-500 leading-relaxed">
+        By uploading, you confirm that you have the right and authority to submit this document for
+        processing. Uploads are processed and retained temporarily in accordance with our{" "}
+        <Link href="/privacy" className="underline hover:text-slate-800">
+          Privacy Policy
+        </Link>{" "}
+        and{" "}
+        <Link href="/terms" className="underline hover:text-slate-800">
+          Terms of Use
+        </Link>
+        . Extracted figures are informational and should be verified against original filings.
+      </p>
+
       <div role="status" aria-live="polite">
         <UploadStatus state={state} />
       </div>

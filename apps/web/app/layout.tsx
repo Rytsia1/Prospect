@@ -25,6 +25,33 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8">{children}</main>
+        <footer className="border-t border-slate-200 bg-slate-50/50 py-8 mt-auto">
+          <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 sm:flex-row sm:items-center sm:justify-between text-xs text-slate-500">
+            <div>
+              <p className="font-medium text-slate-700">Prospect</p>
+              <p className="mt-0.5 text-slate-500">
+                Evidence-first financial document intelligence · Informational research tool
+              </p>
+            </div>
+            <nav aria-label="Legal" className="flex flex-wrap gap-4 sm:gap-6">
+              <Link href="/privacy" className="hover:text-slate-900 transition-colors">
+                Privacy
+              </Link>
+              <Link href="/terms" className="hover:text-slate-900 transition-colors">
+                Terms
+              </Link>
+              <Link href="/acceptable-use" className="hover:text-slate-900 transition-colors">
+                Acceptable Use
+              </Link>
+              <Link href="/security" className="hover:text-slate-900 transition-colors">
+                Security
+              </Link>
+              <Link href="/copyright" className="hover:text-slate-900 transition-colors">
+                Copyright
+              </Link>
+            </nav>
+          </div>
+        </footer>
       </body>
     </html>
   );
