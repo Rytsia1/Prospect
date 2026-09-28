@@ -40,7 +40,10 @@ CSRF_HEADER = "X-CSRF-Token"
 
 
 def _signature(payload: str) -> str:
-    secret = get_settings().app_secret.get_secret_value().encode()
+    configured = get_settings().app_secret
+    if configured is None:  # the API refuses to start without it (app/main.py)
+        raise RuntimeError("APP_SECRET is not configured")
+    secret = configured.get_secret_value().encode()
     return hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
 
 
@@ -112,7 +115,7 @@ def current_auth(
     if len(parts) != 5 or parts[0] != VERSION:
         raise _reject(request, "session_invalid")
     payload, signature = ".".join(parts[:4]), parts[4]
-    if not hmac.compare_digest(signature, _signature(payload)):
+    if not hmac.compare_digest(signature.encode(), _signature(payload).encode()):
         raise _reject(request, "session_invalid")
     try:  # signed by us, so these parse; guard anyway
         session_id, expires = uuid.UUID(parts[1]), int(parts[3])
@@ -132,7 +135,9 @@ def current_auth(
     request.state.user_id, request.state.session_id = str(row.user_id), str(row.id)
     if via_cookie and request.method not in SAFE_METHODS:
         sent = request.headers.get(CSRF_HEADER, "")
-        if not origin_trusted(request) or not hmac.compare_digest(sent, csrf_token(row.id)):
+        if not origin_trusted(request) or not hmac.compare_digest(
+            sent.encode(), csrf_token(row.id).encode()
+        ):
             security_event("csrf_rejected", request, origin=request_origin(request))
             raise ApiError(403, "csrf_failed", "The request could not be verified.")
     return Auth(row.user_id, row.id)
@@ -149,14 +154,18 @@ CurrentUserId = Annotated[uuid.UUID, Depends(current_user_id)]
 DbSession = Annotated[Session, Depends(get_session)]
 
 
-def limit_user(bucket: str) -> DependsParam:
-    """Route dependency: authenticate, then count the request against the user's bucket.
+def limit_user(bucket: str, ip_bucket: str | None = None) -> DependsParam:
+    """Route dependency: authenticate, then count the request against the user's bucket and,
+    with ip_bucket, the client IP's too.
 
-    Per user rather than per token, so refreshing a session does not reset the count.
+    Per user rather than per token, so refreshing a session does not reset the count; per IP as
+    well for expensive operations, so opening new anonymous sessions does not either.
     """
 
     def dependency(request: Request, auth: CurrentAuth) -> None:
         ratelimit.hit(request, bucket, f"user:{auth.user_id}")
+        if ip_bucket:
+            ratelimit.hit(request, ip_bucket, f"ip:{ratelimit.client_ip(request)}")
 
     return Depends(dependency)
 
@@ -193,7 +202,11 @@ def _issue(response: Response, row: UserSession) -> SessionInfo:
     return _info(row)
 
 
-@router.post("/sessions", status_code=201, dependencies=[ratelimit.limit_ip("sessions")])
+@router.post(
+    "/sessions",
+    status_code=201,
+    dependencies=[ratelimit.limit_ip("sessions"), ratelimit.limit_ip("sessions_daily")],
+)
 def create_session(request: Request, response: Response, db: DbSession) -> SessionInfo:
     """A new anonymous identity, set as a cookie. Rate limited per client IP."""
     user = User()

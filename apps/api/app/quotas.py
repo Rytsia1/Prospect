@@ -1,4 +1,4 @@
-"""Per-user resource quotas, checked before expensive work and safe under concurrency.
+"""Per-user resource quotas (plus one global queue cap), checked before expensive work.
 
 Each check first locks the user's row (SELECT ... FOR UPDATE) and runs inside the caller's
 transaction, so concurrent requests from one user are serialized: count, then insert, then commit
@@ -64,3 +64,12 @@ def check_processing(request: Request, session: Session, user_id: uuid.UUID) -> 
         settings.quota_max_daily_jobs
     ):
         raise _exceeded(request, "daily_jobs", 429, "Daily processing limit reached.")
+    # ponytail: global cap read without a global lock, so concurrent completes can overshoot it
+    # by a few jobs; it bounds a flood from many new sessions, not a precise budget.
+    queued = session.scalar(
+        select(func.count())
+        .select_from(ProcessingJob)
+        .where(ProcessingJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]))
+    )
+    if (queued or 0) >= settings.quota_max_queued_jobs:
+        raise _exceeded(request, "queued_jobs", 503, "Processing is busy. Try again later.")

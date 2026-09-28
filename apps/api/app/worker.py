@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, exists, or_, select
 from sqlalchemy.orm import Session
 
 from app.analytics import FactInput, calculate
@@ -53,10 +53,12 @@ from app.models import (
     PeriodType,
     ProcessingJob,
     RateLimitCounter,
+    User,
     UserSession,
 )
 from app.pipeline import Analysis, Limits, analyze
 from app.processing import ProcessingError, ProcessingLimitError
+from app.reconcile import reconcile
 from app.sandbox import ProcessingTimeout, run_isolated
 from app.scanning import DocumentScanner, ScannerUnavailable, get_scanner
 from app.storage import ObjectStorage, get_storage
@@ -65,6 +67,7 @@ log = logging.getLogger("prospect.worker")
 
 POLL_SECONDS = 2.0
 SWEEP_SECONDS = 300.0  # cleanup cadence (abandoned uploads, orphaned objects, stale counters)
+RECONCILE_SECONDS = 86_400.0  # storage/database reconciliation (app/reconcile.py), daily
 INTERNAL_ERROR = "Document processing failed."
 
 
@@ -152,7 +155,11 @@ def process_next(storage: ObjectStorage, scanner: DocumentScanner | None = None)
         # killed child can briefly hold the file).
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             path = Path(tmp) / "document.pdf"
-            storage.download_file(storage_key, path)
+            try:
+                storage.download_file(storage_key, path)
+            except FileNotFoundError:  # permanent: retrying cannot bring the file back
+                security_event("object_missing", **fields)
+                raise ProcessingError("The uploaded file is missing. Upload it again.") from None
             _verify_file(path, size, expected_sha256)
             scan = (scanner or get_scanner()).scan(path)
             if scan.verdict == "infected":
@@ -422,13 +429,19 @@ def sweep(storage: ObjectStorage) -> dict[str, int]:
     - stored PDFs of FAILED documents (never read again);
     - FAILED documents' records after FAILED_DOCUMENT_RETENTION_HOURS;
     - every document older than DOCUMENT_RETENTION_DAYS, when that retention is configured;
+    - whole anonymous workspaces with no usable session for WORKSPACE_GRACE_HOURS;
     - expired rate-limit counters and long-expired sessions.
     Temporary files need no sweep: each processing attempt deletes its own directory.
     """
     settings = get_settings()
     now = datetime.now(UTC)
     abandoned_before = now - timedelta(seconds=settings.signed_url_ttl_seconds + 60)
-    counts = {"abandoned_uploads": 0, "deleted_objects": 0, "expired_documents": 0}
+    counts = {
+        "abandoned_uploads": 0,
+        "deleted_objects": 0,
+        "expired_documents": 0,
+        "expired_workspaces": 0,
+    }
     with SessionLocal() as session:
         stale = session.scalars(
             select(Document)
@@ -491,9 +504,53 @@ def sweep(storage: ObjectStorage) -> dict[str, int]:
             audit_event(
                 "document_deleted", user_id=user_id, entity_id=document_id, reason="retention"
             )
+    counts["expired_workspaces"] = _expire_workspaces(storage, now)
     if any(counts.values()):
         log.info("cleanup", extra={"fields": counts})
     return counts
+
+
+def _expire_workspaces(storage: ObjectStorage, now: datetime) -> int:
+    """Delete anonymous users (and everything they own) that nobody can reach any more.
+
+    A session is usable until it expires or is revoked. Once a user has had no usable session
+    for WORKSPACE_GRACE_HOURS, no request can ever read their workspace again (there is no login
+    to recover it), so keeping it would only keep sensitive documents around. Their stored files
+    go first; then the user row, which cascades to documents, companies, scenarios, audit rows.
+    """
+    cutoff = now - timedelta(hours=get_settings().workspace_grace_hours)
+    usable = select(UserSession.id).where(
+        UserSession.user_id == User.id,
+        or_(
+            and_(UserSession.revoked_at.is_(None), UserSession.expires_at > cutoff),
+            UserSession.revoked_at > cutoff,
+        ),
+    )
+    expired = 0
+    with SessionLocal() as session:
+        users = session.scalars(
+            select(User)
+            .where(~exists(usable), User.created_at < cutoff)
+            .limit(20)
+            .with_for_update(skip_locked=True)
+        ).all()
+        for user in users:
+            user_id = user.id
+            try:
+                documents = session.scalars(select(Document).where(Document.user_id == user_id))
+                for document in documents.all():
+                    storage.delete(document.storage_key)  # idempotent; before the rows go
+                session.delete(user)
+                session.commit()
+            except Exception:
+                session.rollback()
+                log.exception(
+                    "workspace expiry failed", extra={"fields": {"user_id": str(user_id)}}
+                )
+                continue  # nothing half-deleted in the database; retried next sweep
+            expired += 1
+            log.info("workspace expired", extra={"fields": {"user_id": str(user_id)}})
+    return expired
 
 
 class _Health(BaseHTTPRequestHandler):
@@ -517,14 +574,23 @@ def main() -> None:
         server = ThreadingHTTPServer(("0.0.0.0", int(port)), _Health)  # noqa: S104
         threading.Thread(target=server.serve_forever, daemon=True).start()
 
+    settings = get_settings()
+    # Worker contract (docs/SECURITY.md §14): report what this runtime cannot enforce itself.
+    if settings.app_secret is not None:
+        log.warning("worker holds APP_SECRET; it never needs it. Remove it from this service.")
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        log.warning("worker runs as root; run it as an unprivileged user")
     storage = get_storage()
     log.info("worker started")
-    next_sweep = 0.0
+    next_sweep = next_reconcile = 0.0
     while not stop.is_set():
         try:
             if time.monotonic() >= next_sweep:
                 sweep(storage)
                 next_sweep = time.monotonic() + SWEEP_SECONDS
+            if time.monotonic() >= next_reconcile:
+                reconcile(storage, delete=True)
+                next_reconcile = time.monotonic() + RECONCILE_SECONDS
             worked = process_next(storage)
         except Exception:  # e.g. database unreachable: keep the worker alive and retry
             log.exception("worker loop error")

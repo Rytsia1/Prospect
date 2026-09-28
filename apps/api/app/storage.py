@@ -8,7 +8,9 @@ and worker never run their own cleanup.
 
 import base64
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
@@ -40,6 +42,7 @@ class ObjectStorage(Protocol):
     def download_file(self, key: str, path: Path) -> None: ...
     def delete(self, key: str) -> None: ...
     def copy(self, source: str, target: str) -> None: ...
+    def list_objects(self, prefix: str) -> Iterator[tuple[str, datetime]]: ...
     def stat(self, key: str) -> ObjectStat | None: ...
     def read_prefix(self, key: str, length: int) -> bytes: ...
     def signed_download_url(self, key: str, expires_in: int) -> str: ...
@@ -69,8 +72,22 @@ class S3ObjectStorage:
         return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
 
     def download_file(self, key: str, path: Path) -> None:
-        """Stream an object to disk without holding it in memory."""
-        self.client.download_file(self.bucket, key, str(path))
+        """Stream an object to disk without holding it in memory. FileNotFoundError: no such
+        object (a permanent condition, unlike a storage outage)."""
+        try:
+            self.client.download_file(self.bucket, key, str(path))
+        except ClientError as e:
+            if e.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound"):
+                raise FileNotFoundError(key) from None
+            raise
+
+    def list_objects(self, prefix: str) -> Iterator[tuple[str, datetime]]:
+        """(key, last modified) of every object under prefix, page by page."""
+        for page in self.client.get_paginator("list_objects_v2").paginate(
+            Bucket=self.bucket, Prefix=prefix
+        ):
+            for item in page.get("Contents", []):
+                yield item["Key"], item["LastModified"]
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)

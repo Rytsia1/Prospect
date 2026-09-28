@@ -37,3 +37,11 @@ def test_unexpected_errors_fail_closed_without_details():
 def test_memory_is_capped():
     with pytest.raises(ProcessingLimitError):
         run_isolated(bytearray, 2 * 1024**3, timeout_seconds=60, memory_bytes=512 * 1024**2)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="rlimits are POSIX-only")
+def test_child_writes_no_core_dumps_and_has_a_cpu_limit():
+    import resource
+
+    assert run_isolated(resource.getrlimit, resource.RLIMIT_CORE, timeout_seconds=10) == (0, 0)
+    assert run_isolated(resource.getrlimit, resource.RLIMIT_CPU, timeout_seconds=10) == (15, 15)

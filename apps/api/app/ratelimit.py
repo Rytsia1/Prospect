@@ -2,14 +2,21 @@
 
 Counters live in PostgreSQL (already required and shared by all instances); one atomic upsert per
 request, so concurrent requests on different instances cannot both slip under the limit.
-Limits come from settings as "<requests>/<window seconds>" (RATE_LIMIT_*). Anonymous endpoints
-count per client IP (request.client, which uvicorn fills from X-Forwarded-For only for proxies
-listed in --forwarded-allow-ips); authenticated ones per user (app/auth.limit_user).
+Limits come from settings as "<requests>/<window seconds>" (RATE_LIMIT_*). Session creation
+counts per client IP; authenticated endpoints per user and, for uploads, completion and export,
+per client IP too (app/auth.limit_user), so a fresh anonymous session does not reset them.
+
+Client IP: browsers reach the API through the web app's proxy (apps/web/middleware.ts), which
+sends the visitor's IP in X-Prospect-Client-IP together with TRUSTED_PROXY_SECRET. Only a request
+carrying that secret may name an IP; any other request (a direct client, however it sets
+X-Forwarded-For / X-Real-IP / Forwarded) is counted by its TCP peer address.
 
 ponytail: one Postgres upsert per limited request; move the counters to Redis (INCR + EXPIRE)
 if that write load ever shows up in database metrics.
 """
 
+import hmac
+import ipaddress
 import math
 from datetime import UTC, datetime
 
@@ -55,8 +62,20 @@ def hit(request: Request, bucket: str, subject: str) -> None:
         )
 
 
+PROXY_SECRET_HEADER, CLIENT_IP_HEADER = "X-Prospect-Proxy-Secret", "X-Prospect-Client-IP"
+
+
 def client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    peer = request.client.host if request.client else "unknown"
+    secret = get_settings().trusted_proxy_secret
+    sent = request.headers.get(PROXY_SECRET_HEADER, "")
+    # bytes: compare_digest refuses non-ASCII str, and header values can be any latin-1 text
+    if secret is None or not hmac.compare_digest(sent.encode(), secret.get_secret_value().encode()):
+        return peer
+    try:  # from our proxy: still only a well-formed address is accepted
+        return str(ipaddress.ip_address(request.headers.get(CLIENT_IP_HEADER, "").strip()))
+    except ValueError:
+        return peer
 
 
 def limit_ip(bucket: str) -> DependsParam:

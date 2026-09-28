@@ -80,6 +80,9 @@ Filename = Annotated[str, Field(min_length=1, max_length=1000), AfterValidator(_
 
 
 class DocumentCreate(BaseModel):
+    # Unknown fields are refused: the client never names a storage key, owner or path.
+    model_config = ConfigDict(extra="forbid")
+
     filename: Filename
     content_type: str
     size_bytes: int = Field(gt=0)
@@ -249,7 +252,7 @@ def _owned_document(
     return document
 
 
-@router.post("", status_code=201, dependencies=[limit_user("uploads")])
+@router.post("", status_code=201, dependencies=[limit_user("uploads", "uploads_ip")])
 def create_document(
     request: Request,
     body: DocumentCreate,
@@ -316,7 +319,7 @@ def _reject_upload(
     return ApiError(422, "invalid_upload", problem)
 
 
-@router.post("/{document_id}/complete", dependencies=[limit_user("complete")])
+@router.post("/{document_id}/complete", dependencies=[limit_user("complete", "complete_ip")])
 def complete_upload(
     request: Request,
     document_id: uuid.UUID,

@@ -279,7 +279,7 @@ def _too_large(request: Request, reason: str, size: int, limit: int) -> ApiError
     )
 
 
-@router.get("/{document_id}/export", dependencies=[limit_user("export")])
+@router.get("/{document_id}/export", dependencies=[limit_user("export", "export_ip")])
 def export_financials(
     request: Request,
     document_id: uuid.UUID,

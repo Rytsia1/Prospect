@@ -1,8 +1,26 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { contentSecurityPolicy, originOnly } from "@/lib/csp";
+import { proxyHeaders } from "@/lib/proxy";
 
-/** A fresh CSP nonce per page request; Next adds it to its own scripts while rendering. */
+const API_ORIGIN = process.env.API_ORIGIN ?? "http://localhost:8000";
+
 export function middleware(request: NextRequest) {
+  const { pathname, search } = request.nextUrl;
+  if (pathname.startsWith("/api/v1/")) {
+    // Same-origin API proxy: the browser never talks to the API directly, and only this proxy
+    // can tell the API who the visitor is (lib/proxy.ts). The PDF itself never comes through
+    // here: it goes straight from the browser to storage with a signed URL.
+    return NextResponse.rewrite(new URL(pathname + search, API_ORIGIN), {
+      request: {
+        headers: proxyHeaders(
+          request.headers,
+          process.env.TRUSTED_PROXY_SECRET,
+          process.env.VERCEL === "1",
+        ),
+      },
+    });
+  }
+  // Pages: a fresh CSP nonce per request; Next adds it to its own scripts while rendering.
   const nonce = btoa(crypto.randomUUID());
   const csp = contentSecurityPolicy(nonce, {
     dev: process.env.NODE_ENV === "development",
@@ -17,10 +35,10 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Pages only: not the proxied API, static assets or prefetches.
+  // Pages and the API proxy; not static assets or prefetches.
   matcher: [
     {
-      source: "/((?!api/|_next/static|_next/image|favicon.ico).*)",
+      source: "/((?!_next/static|_next/image|favicon.ico).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },

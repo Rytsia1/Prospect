@@ -84,7 +84,8 @@ def test_production_refuses_insecure_settings(override, problem):
         production(**override)
 
 
-@pytest.mark.parametrize("missing", ["app_secret", "database_url", "object_storage_secret_key"])
+# APP_SECRET is required by the API only (api_problems; tests/test_p15.py).
+@pytest.mark.parametrize("missing", ["database_url", "object_storage_secret_key"])
 def test_missing_required_secret_fails_startup(monkeypatch, missing):
     monkeypatch.delenv(missing.upper(), raising=False)
     values = REQUIRED | {"app_secret": STRONG, "environment": "production"}

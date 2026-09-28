@@ -29,7 +29,7 @@ from app import (
     watchlist,
 )
 from app.auth import CSRF_HEADER, SAFE_METHODS, request_origin
-from app.config import get_settings
+from app.config import api_problems, get_settings
 from app.errors import ApiError
 from app.logs import configure_logging, security_event
 
@@ -39,6 +39,8 @@ REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 settings = get_settings()
+if problems := api_problems(settings):  # fail closed before serving anything
+    raise RuntimeError("API configuration: " + "; ".join(problems))
 configure_logging(settings.log_level)
 log = logging.getLogger("prospect.api")
 production = settings.environment == "production"
@@ -176,6 +178,7 @@ async def request_context(request: Request, call_next):
     for name, value in SECURITY_HEADERS.items():
         response.headers.setdefault(name, value)
     fields |= {
+        "session_id": getattr(request.state, "session_id", None),  # an id, never the token
         "status": response.status_code,
         "duration_ms": round((time.perf_counter() - start) * 1000, 1),
     }

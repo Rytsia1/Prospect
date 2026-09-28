@@ -58,12 +58,17 @@ ENVIRONMENT=production
 DATABASE_URL
 OBJECT_STORAGE_*
 LLM_API_KEY
-APP_SECRET          # ≥ 32 random bytes; startup fails on a weak or placeholder value
-ALLOWED_ORIGINS     # https://prospect.example.com (the web app only; CORS + CSRF)
-DOCUMENT_SCANNER    # clamav (recommended) or none; startup fails if unset
-CLAMAV_HOST / CLAMAV_PORT
-DOCUMENT_RETENTION_DAYS           # optional; unset keeps documents until the user deletes them
-FORWARDED_ALLOW_IPS # "*" only if the API is reachable solely through the platform proxy
+APP_SECRET            # ≥ 32 random bytes; the API refuses to start without it
+TRUSTED_PROXY_SECRET  # ≥ 32 random bytes; the same value on Vercel; required
+ALLOWED_ORIGINS       # https://prospect.example.com (the web app only; CORS + CSRF)
+DOCUMENT_SCANNER      # clamav (recommended) or none; startup fails if unset
+DOCUMENT_RETENTION_DAYS=30
+```
+
+Start command (no forwarded-header trust: client IPs come only from the web proxy):
+
+```bash
+alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log --no-proxy-headers
 ```
 
 Once per bucket, with credentials allowed to configure it, apply the storage lifecycle rules
@@ -90,7 +95,10 @@ GET /health
 
 Deploy the document-processing worker.
 
-The worker must use the same database and object-storage credentials.
+The worker must use the same database and object-storage credentials, and must NOT be given
+`APP_SECRET` or `TRUSTED_PROXY_SECRET` (it needs neither and warns if it holds `APP_SECRET`).
+Also set `CLAMAV_HOST`/`CLAMAV_PORT`, a service memory limit, and a non-root user
+(docs/SECURITY.md §15).
 
 Verify:
 
@@ -108,6 +116,7 @@ Configure:
 ```text
 API_ORIGIN=https://api.example.com          # /api/v1 is proxied here (set before building)
 STORAGE_ORIGIN=https://<account-id>.r2.cloudflarestorage.com
+TRUSTED_PROXY_SECRET=<same value as the API> # the build fails on Vercel without it
 ```
 
 ### Step 6 — Custom Domain
@@ -255,3 +264,44 @@ Vercel preview deployments can be used for frontend changes.
 - [ ] page evidence opens
 - [ ] calculation appears
 - [ ] research query works
+
+## 8. Backups and Recovery
+
+Nothing here exists until it is configured on the hosting platforms; PostgreSQL running is not a
+backup.
+
+**Database (holds everything except the PDFs).**
+
+- Strategy: the managed provider's automated daily backups plus point-in-time recovery (Railway,
+  Render, Neon and Supabase all offer it on paid plans; enable it explicitly).
+- Retention: at least 7 days of PITR. Keep it no longer than `DOCUMENT_RETENTION_DAYS` + 7:
+  backups also contain deleted workspaces, so they extend how long HIGH data lives (a restore
+  brings deleted documents' rows back; the sweep and retention delete them again once running).
+- Restore: restore into a new database, run `alembic upgrade head`, point `DATABASE_URL` of the
+  API and worker at it, then run `python -m app.reconcile` (dry run) to list documents whose
+  files are gone (expected: storage is not rolled back).
+- Verify quarterly: restore the latest backup into a scratch database, run `alembic current`
+  (must be head) and `select count(*) from documents`, and `python -m app.reconcile` against a
+  copy of the settings. Record the date and result.
+
+**Object storage (PDFs).** Not backed up, deliberately: documents are temporary by design
+(docs/SECURITY.md §2), re-uploadable by their owner, and a backup would keep HIGH data past its
+retention. Expectation: after a storage loss, affected documents fail with "The uploaded file is
+missing"; users upload again. Their extracted facts survive only until those documents are
+deleted.
+
+**Not configured yet (to do before launch):** enable PITR on the database; decide backup
+retention; run and record a first restore test; store the restore runbook next to the incident
+contacts.
+
+## 9. Production Configuration Checklist
+
+Enforced at startup (the API or worker refuses to start): `ENVIRONMENT` defaults to production;
+`APP_SECRET` present (API) and strong; `TRUSTED_PROXY_SECRET` present (API) and strong;
+`ALLOWED_ORIGINS` exact https origins; secure session cookie; `DOCUMENT_SCANNER` chosen;
+`DOCUMENT_RETENTION_DAYS` set; https storage endpoint; rate limits well formed; lease longer than
+the processing timeout. Enforced on Vercel builds: `API_ORIGIN` and `TRUSTED_PROXY_SECRET`.
+
+By hand: HTTPS on every domain; private bucket; bucket CORS and lifecycle rules; upload, processing
+and quota limits reviewed for expected traffic (defaults in docs/SECURITY.md); uvicorn started
+with `--no-proxy-headers`; database backups (§8); worker user and memory limit.

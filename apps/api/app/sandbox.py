@@ -6,6 +6,7 @@ kills the child. On Linux the child also gets an address-space limit (RLIMIT_AS)
 errors come back over a pipe; only ProcessingError messages (written to be user-safe) cross it.
 """
 
+import math
 import multiprocessing
 import sys
 from collections.abc import Callable
@@ -25,12 +26,23 @@ class ProcessingCrashed(ProcessingLimitError):
         super().__init__("Document processing failed.")
 
 
-def _child(conn: Connection, fn: Callable[[Any], Any], arg: Any, memory_bytes: int | None) -> None:
-    # POSIX only; on Windows (development) the timeout still applies, the memory cap does not.
-    if sys.platform != "win32" and memory_bytes:
+def _child(
+    conn: Connection,
+    fn: Callable[[Any], Any],
+    arg: Any,
+    memory_bytes: int | None,
+    cpu_seconds: int,
+) -> None:
+    # POSIX only; on Windows (development) the parent's timeout still applies, these do not.
+    if sys.platform != "win32":
         import resource
 
-        resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
+        # No core dumps: a crash must not write the parsed financial document to disk.
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        # CPU time, a second bound besides the parent's wall-clock kill.
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
+        if memory_bytes:
+            resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
     try:
         conn.send(("ok", fn(arg)))
     except ProcessingLimitError as e:
@@ -52,7 +64,10 @@ def run_isolated(
     ProcessingError / ProcessingCrashed; never leaves the child running."""
     context = multiprocessing.get_context("spawn")  # no inherited DB connections or locks
     receive, send = context.Pipe(duplex=False)
-    child = context.Process(target=_child, args=(send, fn, arg, memory_bytes), daemon=True)
+    cpu_seconds = math.ceil(timeout_seconds) + 5
+    child = context.Process(
+        target=_child, args=(send, fn, arg, memory_bytes, cpu_seconds), daemon=True
+    )
     child.start()
     send.close()  # the parent keeps only the reading end, so a dead child reads as EOF
     try:

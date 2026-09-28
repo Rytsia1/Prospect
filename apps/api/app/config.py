@@ -28,9 +28,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # --- Runtime ---------------------------------------------------------------------------
-    # Fail closed: production unless ENVIRONMENT=development is set explicitly, so a forgotten
-    # variable can never let a weak APP_SECRET through.
-    environment: Literal["development", "production"] = "production"
+    # Fail closed: production unless ENVIRONMENT=development (local) or test (CI, pytest) is set
+    # explicitly, so a forgotten variable can never let weak settings through.
+    environment: Literal["development", "test", "production"] = "production"
     database_url: str
     # Trusted browser origins (comma-separated): CORS and CSRF Origin checks. Production: the
     # deployed frontend only, https. CORS_ORIGINS is the pre-P1 name, still accepted.
@@ -46,8 +46,12 @@ class Settings(BaseSettings):
     object_storage_secret_key: SecretStr
     signed_url_ttl_seconds: int = 900
 
-    # --- Auth ------------------------------------------------------------------------------
-    app_secret: SecretStr  # HMAC key for session tokens; ≥ 32 random bytes in production
+    # --- Auth (API only: the worker needs neither, see api_problems) -----------------------
+    app_secret: SecretStr | None = None  # HMAC key for session tokens; ≥ 32 random bytes
+    # Shared with the web app's /api proxy (apps/web/middleware.ts): only a request carrying it
+    # may name the client IP (X-Prospect-Client-IP). Everyone else is rate limited by the TCP
+    # peer address, so a direct client cannot spoof its IP.
+    trusted_proxy_secret: SecretStr | None = None
     session_ttl_seconds: int = 86_400
     # The session cookie is HttpOnly, SameSite=Strict, Path=/ and, when secure, Secure with the
     # __Host- prefix. Production requires secure; only plain-http local development turns it off.
@@ -61,6 +65,11 @@ class Settings(BaseSettings):
     rate_limit_financials: str = "60/60"
     rate_limit_compute: str = "30/60"  # diff, scenario preview, data quality
     rate_limit_export: str = "10/60"
+    # Per client IP as well, so opening new anonymous sessions does not reset the limits.
+    rate_limit_sessions_daily: str = "50/86400"
+    rate_limit_uploads_ip: str = "60/3600"
+    rate_limit_complete_ip: str = "90/3600"
+    rate_limit_export_ip: str = "30/60"
 
     # --- Upload ----------------------------------------------------------------------------
     max_upload_bytes: int = 50 * 1024 * 1024  # enforced by the storage signature, not just here
@@ -83,6 +92,8 @@ class Settings(BaseSettings):
     quota_max_storage_bytes: int = 2 * 1024**3
     quota_max_active_jobs: int = 3
     quota_max_daily_jobs: int = 50
+    # Across all users: queued + running jobs. New sessions cannot flood the queue past it.
+    quota_max_queued_jobs: int = 500
 
     # --- Threat scanning and retention -----------------------------------------------------
     # clamav: scan every PDF with clamd before parsing; none: documents are not scanned (and are
@@ -91,11 +102,17 @@ class Settings(BaseSettings):
     clamav_host: str = "localhost"
     clamav_port: int = 3310
     clamav_timeout_seconds: float = 60
-    # Days a document is kept before it is deleted with all derived data; unset: kept until the
-    # user deletes it. FAILED documents' records are removed after FAILED_DOCUMENT_RETENTION_HOURS
-    # (their stored files are deleted within minutes by the sweep).
-    document_retention_days: int | None = Field(None, ge=1)
+    # Anonymous workspace lifecycle (docs/SECURITY.md §2): a session lives SESSION_TTL_SECONDS
+    # (refreshed while in use). Once a user has had no usable session for WORKSPACE_GRACE_HOURS,
+    # the whole workspace (documents, files, derived data) is deleted: nobody can reach it again.
+    # Independently, every document is deleted DOCUMENT_RETENTION_DAYS after upload (required in
+    # production), and FAILED documents' records after FAILED_DOCUMENT_RETENTION_HOURS.
+    workspace_grace_hours: int = Field(24, ge=1)
+    document_retention_days: int | None = Field(30, ge=1)
     failed_document_retention_hours: int = Field(24, ge=1)
+    # Storage objects under uploads/ or documents/ with no database record are deleted only once
+    # older than this (app/reconcile.py).
+    reconcile_orphan_grace_hours: int = Field(48, ge=1)
 
     # --- Financials / export ---------------------------------------------------------------
     page_default_limit: int = 100
@@ -128,6 +145,10 @@ class Settings(BaseSettings):
         "rate_limit_financials",
         "rate_limit_compute",
         "rate_limit_export",
+        "rate_limit_sessions_daily",
+        "rate_limit_uploads_ip",
+        "rate_limit_complete_ip",
+        "rate_limit_export_ip",
     )
     @classmethod
     def rate_format(cls, value: str) -> str:
@@ -143,9 +164,15 @@ class Settings(BaseSettings):
         if not origins or any(o == "*" or o != o.rstrip("/") for o in origins):
             raise ValueError("ALLOWED_ORIGINS lists exact origins (scheme://host[:port]), no '*'")
         if self.environment == "production":
-            problem = secret_problem(self.app_secret.get_secret_value())
-            if problem:
-                raise ValueError(f"APP_SECRET is not safe for production: {problem}")
+            for name in ("app_secret", "trusted_proxy_secret"):
+                value = getattr(self, name)
+                problem = value is not None and secret_problem(value.get_secret_value())
+                if problem:
+                    raise ValueError(f"{name.upper()} is not safe for production: {problem}")
+            if not self.object_storage_endpoint.startswith("https://"):
+                raise ValueError("OBJECT_STORAGE_ENDPOINT must be https in production")
+            if self.document_retention_days is None:
+                raise ValueError("DOCUMENT_RETENTION_DAYS must be set in production")
             if not all(o.startswith("https://") for o in origins):
                 raise ValueError("ALLOWED_ORIGINS must be https:// origins in production")
             if not self.session_cookie_secure:
@@ -160,6 +187,20 @@ class Settings(BaseSettings):
     @property
     def origin_list(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+
+def api_problems(settings: Settings) -> list[str]:
+    """What stops the API (not the worker) from starting. The API signs sessions and trusts the
+    web proxy; the worker does neither, so it must not need (or hold) these secrets."""
+    problems = []
+    if settings.app_secret is None:
+        problems.append("APP_SECRET is required")
+    if settings.environment == "production" and settings.trusted_proxy_secret is None:
+        problems.append(
+            "TRUSTED_PROXY_SECRET is required in production (else every browser shares the "
+            "proxy's IP for rate limits)"
+        )
+    return problems
 
 
 def secret_problem(secret: str) -> str | None:

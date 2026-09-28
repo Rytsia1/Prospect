@@ -225,6 +225,7 @@ def test_production_adds_hsts_and_hides_the_docs():
     env = os.environ | {
         "ENVIRONMENT": "production",
         "APP_SECRET": secrets.token_urlsafe(48),  # generated: no secret-shaped literal
+        "TRUSTED_PROXY_SECRET": secrets.token_urlsafe(48),
         "ALLOWED_ORIGINS": "https://prospect.example",
         "DOCUMENT_SCANNER": "none",
     }
