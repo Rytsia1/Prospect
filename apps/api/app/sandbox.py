@@ -52,8 +52,8 @@ class ProcessingTimeout(ProcessingError):
 
 
 class ProcessingCrashed(ProcessingLimitError):
-    def __init__(self) -> None:
-        super().__init__("Document processing failed.")
+    def __init__(self, message: str = "Document processing failed.") -> None:
+        super().__init__(message)
 
 
 # --- Parent side ------------------------------------------------------------------------------
@@ -150,18 +150,37 @@ def _kill(child: subprocess.Popen) -> None:
     child.wait(timeout=10)
 
 
-def _read_result(path: Path, max_bytes: int) -> bytes:
+def _read_result(path: os.PathLike[str] | str, max_bytes: int) -> bytes:
     """At most max_bytes + 1 bytes of a regular file. The child controls what is at `path`: a
     symlink to /dev/zero, a FIFO or a huge file must not hang or exhaust the worker."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+
     try:
         fd = os.open(path, flags)
-    except OSError:  # missing (killed before it answered) or a symlink
-        raise ProcessingCrashed() from None
-    with os.fdopen(fd, "rb") as f:
-        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
-            raise ProcessingCrashed()
-        return f.read(max_bytes + 1)
+    except OSError as exc:
+        raise ProcessingCrashed(f"cannot read parser result: {exc}") from exc
+
+    try:
+        try:
+            metadata = os.fstat(fd)
+
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ProcessingCrashed("parser result is not a regular file")
+
+            # Read one byte beyond the limit so callers can detect overflow.
+            return os.read(fd, max_bytes + 1)
+
+        except ProcessingCrashed:
+            raise
+
+        except OSError as exc:
+            raise ProcessingCrashed(f"cannot read parser result: {exc}") from exc
+
+    finally:
+        os.close(fd)
 
 
 def can_connect(address: tuple[str, int]) -> bool:

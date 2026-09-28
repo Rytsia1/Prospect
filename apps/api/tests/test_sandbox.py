@@ -45,3 +45,42 @@ def test_child_writes_no_core_dumps_and_has_a_cpu_limit():
 
     assert run_isolated(resource.getrlimit, resource.RLIMIT_CORE, timeout_seconds=10) == (0, 0)
     assert run_isolated(resource.getrlimit, resource.RLIMIT_CPU, timeout_seconds=10) == (15, 15)
+
+
+def test_read_result_regular_and_oversized(tmp_path: Path) -> None:
+    from app.sandbox import _read_result
+
+    target = tmp_path / "valid.txt"
+    target.write_bytes(b"hello world")
+    assert _read_result(target, 20) == b"hello world"
+
+    # Exactly max_bytes + 1 bytes read when file is oversized
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"x" * 1000)
+    assert len(_read_result(big, 50)) == 51
+
+
+def test_read_result_rejects_non_regular_and_missing_paths(tmp_path: Path) -> None:
+    import os
+
+    from app.sandbox import _read_result
+
+    folder = tmp_path / "subfolder"
+    folder.mkdir()
+    with pytest.raises(ProcessingCrashed):
+        _read_result(folder, 100)
+
+    missing = tmp_path / "does_not_exist.bin"
+    with pytest.raises(ProcessingCrashed):
+        _read_result(missing, 100)
+
+    if sys.platform != "win32":
+        symlink = tmp_path / "symlink.bin"
+        symlink.symlink_to("/dev/zero")
+        with pytest.raises(ProcessingCrashed):
+            _read_result(symlink, 100)
+
+        fifo = tmp_path / "test_fifo"
+        os.mkfifo(fifo)
+        with pytest.raises(ProcessingCrashed):
+            _read_result(fifo, 100)
