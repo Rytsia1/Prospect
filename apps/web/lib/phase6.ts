@@ -1,5 +1,6 @@
 import { api } from "./api.ts";
-import type { FinancialFact } from "./documents.ts";
+import type { FinancialFact, ProspectDocument } from "./documents.ts";
+import type { Financials } from "./financials.ts";
 
 // ==========================================
 // 1. Document Diff Types & API
@@ -280,50 +281,60 @@ export async function deleteScenario(id: string): Promise<void> {
 // 5. Company Workspace Types & API
 // ==========================================
 
-export type Company = {
+// CompanySummaryOut: GET /companies, POST /companies, PATCH /companies/{id}.
+export type CompanySummary = {
   id: string;
-  user_id: string;
   name: string;
   ticker: string | null;
   country: string | null;
-  currency: string;
+  // Primary reporting currency (context only): each fact carries its own currency.
+  reporting_currency: string | null;
   description: string | null;
+  document_count: number;
+  latest_period: string | null;
+  is_in_watchlist: boolean;
   created_at: string;
   updated_at: string;
-  documents: {
-    id: string;
-    filename: string;
-    fiscal_year: number | null;
-    status: string;
-  }[];
-  latest_period: string | null;
-  latest_revenue: string | null;
-  latest_net_income: string | null;
 };
 
-export async function listCompanies(): Promise<Company[]> {
-  return api<Company[]>("/companies");
+// CompanyDetailOut: GET /companies/{id}. Figures come from `financials` (with evidence).
+export type CompanyDetail = Omit<CompanySummary, "document_count"> & {
+  documents: ProspectDocument[];
+  financials: Financials | null;
+  scenario_count: number;
+};
+
+export type CompanyUpdate = {
+  name?: string;
+  ticker?: string | null;
+  country?: string | null;
+  reporting_currency?: string;
+  description?: string | null;
+};
+
+export async function listCompanies(): Promise<CompanySummary[]> {
+  return api<CompanySummary[]>("/companies");
 }
 
-export async function getCompany(id: string): Promise<Company> {
-  return api<Company>(`/companies/${id}`);
+export async function getCompany(id: string): Promise<CompanyDetail> {
+  return api<CompanyDetail>(`/companies/${id}`);
 }
 
 export async function createCompany(data: {
   name: string;
   ticker?: string | null;
   country?: string | null;
-  currency?: string;
+  reporting_currency?: string;
   description?: string | null;
-}): Promise<Company> {
-  return api<Company>("/companies", {
+}): Promise<CompanySummary> {
+  return api<CompanySummary>("/companies", {
     method: "POST",
     body: JSON.stringify(data),
   });
 }
 
-export async function updateCompany(id: string, data: Partial<Company>): Promise<Company> {
-  return api<Company>(`/companies/${id}`, {
+export async function updateCompany(id: string, data: CompanyUpdate): Promise<CompanySummary> {
+  return api<CompanySummary>(`/companies/${id}`, {
     method: "PATCH",
     body: JSON.stringify(data),
   });
@@ -338,8 +349,8 @@ export async function deleteCompany(id: string): Promise<void> {
 export async function attachDocumentToCompany(
   companyId: string,
   documentId: string,
-): Promise<Company> {
-  return api<Company>(`/companies/${companyId}/documents`, {
+): Promise<ProspectDocument> {
+  return api<ProspectDocument>(`/companies/${companyId}/documents`, {
     method: "POST",
     body: JSON.stringify({ document_id: documentId }),
   });
@@ -358,18 +369,24 @@ export async function detachDocumentFromCompany(
 // 6. Watchlist Types & API
 // ==========================================
 
+// WatchlistCompanyOut: GET /watchlist, POST /watchlist. Each amount carries its own currency
+// (as its source states it); the company's reporting currency is context only. Never converted.
 export type WatchlistEntry = {
-  id: string;
-  user_id: string;
   company_id: string;
-  created_at: string;
-  company_name: string;
+  name: string;
   ticker: string | null;
-  currency: string;
+  country: string | null;
+  reporting_currency: string | null;
+  currency: string | null; // of `revenue`
   latest_period: string | null;
-  latest_revenue: string | null;
-  latest_net_income: string | null;
-  revenue_yoy_pct: string | null;
+  revenue: string | null; // decimal string, full currency units
+  revenue_formatted: string | null;
+  net_income: string | null;
+  net_income_currency: string | null; // may differ from revenue's
+  net_income_formatted: string | null;
+  revenue_yoy_change: string | null; // plain ratio, e.g. "0.148"; null across currencies
+  revenue_yoy_change_formatted: string | null;
+  created_at: string;
 };
 
 export async function listWatchlist(): Promise<WatchlistEntry[]> {

@@ -88,7 +88,8 @@ Every extracted value must include:
 ```text
 metric
 value
-currency
+currency          (the fact's own, as the source states it; never the company's)
+currency_status   (verified / inferred / missing / conflicting)
 scale
 period
 document_id

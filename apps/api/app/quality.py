@@ -121,13 +121,42 @@ def detect_document_anomalies(
                 )
             )
 
-    # 2. Conflicting data across documents for same metric and period
-    by_metric_period: dict[tuple[str, str], list[FactOut]] = {}
-    for f in all_facts:
-        if f.status in (FactStatus.ACCEPTED, FactStatus.CORRECTED):
-            by_metric_period.setdefault((f.metric, f.period_label), []).append(f)
+    # Facts are only ever compared within one company (or one document without a company):
+    # the same metric and period of two different companies is not a conflict.
+    scope_of = {d.id: d.company_id or d.id for d in documents}
+    accepted = [f for f in all_facts if f.status in (FactStatus.ACCEPTED, FactStatus.CORRECTED)]
 
-    for (m_key, p_lbl), facts_group in by_metric_period.items():
+    # 2. Conflicting data across documents for same metric and period
+    by_metric_period: dict[tuple[uuid.UUID, str, str], list[FactOut]] = {}
+    for f in accepted:
+        key = (scope_of[f.document_id], f.metric, f.period_label)
+        by_metric_period.setdefault(key, []).append(f)
+
+    for (_, m_key, p_lbl), facts_group in by_metric_period.items():
+        stated = sorted({f.currency or "" for f in facts_group})
+        if len(stated) > 1:
+            # Same fact, different currencies: never picked or converted, only surfaced.
+            m_name = METRIC_NAMES.get(m_key, m_key)
+            detected.append(
+                DataQualityIssue(
+                    user_id=user_id,
+                    document_id=facts_group[0].document_id,
+                    rule_type="CURRENCY_CONFLICT",
+                    severity="ERROR",
+                    metric=m_key,
+                    period=p_lbl,
+                    description=(
+                        f"{m_name} in {p_lbl} is reported in different currencies "
+                        f"({', '.join(stated)}) across sources. Prospect does not convert "
+                        "currencies, so these values are not comparable; check which currency "
+                        "each source states."
+                    ),
+                    related_fact_ids=[str(f.id) for f in facts_group],
+                    evidence_ids=[str(f.evidence.id) for f in facts_group],
+                    status="OPEN",
+                )
+            )
+            continue
         unique_vals = {(f.value, f.currency) for f in facts_group}
         if len(unique_vals) > 1:
             m_name = METRIC_NAMES.get(m_key, m_key)
@@ -151,12 +180,11 @@ def detect_document_anomalies(
             )
 
     # 3. Unit / currency inconsistency across periods for the same metric
-    by_metric: dict[str, list[FactOut]] = {}
-    for f in all_facts:
-        if f.status in (FactStatus.ACCEPTED, FactStatus.CORRECTED):
-            by_metric.setdefault(f.metric, []).append(f)
+    by_metric: dict[tuple[uuid.UUID, str], list[FactOut]] = {}
+    for f in accepted:
+        by_metric.setdefault((scope_of[f.document_id], f.metric), []).append(f)
 
-    for m_key, facts_group in by_metric.items():
+    for (_, m_key), facts_group in by_metric.items():
         currencies = {f.currency for f in facts_group if f.currency}
         if len(currencies) > 1:
             m_name = METRIC_NAMES.get(m_key, m_key)
@@ -180,7 +208,7 @@ def detect_document_anomalies(
 
     # 4. Large changes check (YoY)
     # Group by metric, sort by fiscal year
-    for m_key, facts_group in by_metric.items():
+    for (_, m_key), facts_group in by_metric.items():
         annual_facts = sorted(
             [f for f in facts_group if f.fiscal_year is not None],
             key=lambda f: f.fiscal_year or 0,
@@ -188,7 +216,11 @@ def detect_document_anomalies(
         for i in range(1, len(annual_facts)):
             prev_f = annual_facts[i - 1]
             curr_f = annual_facts[i]
-            if curr_f.fiscal_year == (prev_f.fiscal_year or 0) + 1 and prev_f.value != 0:
+            if (
+                curr_f.fiscal_year == (prev_f.fiscal_year or 0) + 1
+                and curr_f.currency == prev_f.currency  # across currencies: not comparable
+                and prev_f.value != 0
+            ):
                 diff = CONTEXT.subtract(curr_f.value, prev_f.value)
                 ratio = CONTEXT.divide(abs(diff), abs(prev_f.value))
                 if ratio >= large_change_threshold:
@@ -240,13 +272,15 @@ def detect_document_anomalies(
                 )
 
     # 6. Accounting consistency check (Assets = Liabilities + Equity)
-    for p in {f.period_label for f in all_facts}:
+    scope_periods = {(scope_of[f.document_id], f.period_label) for f in all_facts}
+    for scope, p in scope_periods:
         p_facts = {
             f.metric: f
-            for f in all_facts
-            if f.period_label == p and f.status in (FactStatus.ACCEPTED, FactStatus.CORRECTED)
+            for f in accepted
+            if f.period_label == p and scope_of[f.document_id] == scope
         }
-        if "total_assets" in p_facts and "total_liabilities" in p_facts and "equity" in p_facts:
+        balance = [p_facts.get(m) for m in ("total_assets", "total_liabilities", "equity")]
+        if all(balance) and len({f.currency for f in balance if f}) == 1:
             assets = p_facts["total_assets"].value
             liab = p_facts["total_liabilities"].value
             eq = p_facts["equity"].value
@@ -284,6 +318,26 @@ def detect_document_anomalies(
         m_name = METRIC_NAMES.get(f.metric, f.metric)
         ev_id = [str(f.evidence.id)] if f.evidence else []
         f_id = [str(f.id)]
+
+        if f.currency_status == "inferred":
+            detected.append(
+                DataQualityIssue(
+                    user_id=user_id,
+                    document_id=f.document_id,
+                    rule_type="CURRENCY_INFERRED",
+                    severity="INFO",
+                    metric=f.metric,
+                    period=f.period_label,
+                    description=(
+                        f"Currency of '{m_name}' in {f.period_label} ({f.currency}) is inferred "
+                        "from other pages of the document, not stated with the value. Confirm it "
+                        "in review."
+                    ),
+                    related_fact_ids=f_id,
+                    evidence_ids=ev_id,
+                    status="OPEN",
+                )
+            )
 
         if f.currency is None:
             detected.append(
@@ -361,14 +415,19 @@ def detect_document_anomalies(
             )
 
     # 8. Deterministic impossible structural relationships within the same period
-    for p in {f.period_label for f in all_facts}:
+    for scope, p in scope_periods:
         p_accepted = {
             f.metric: f
-            for f in all_facts
-            if f.period_label == p and f.status in (FactStatus.ACCEPTED, FactStatus.CORRECTED)
+            for f in accepted
+            if f.period_label == p and scope_of[f.document_id] == scope
         }
+
+        def same(a: str, b: str, facts: dict[str, FactOut] = p_accepted) -> bool:
+            """Both present and in one currency: no FX conversion exists to compare others."""
+            return a in facts and b in facts and facts[a].currency == facts[b].currency
+
         # Cash > Current Assets
-        if "cash" in p_accepted and "current_assets" in p_accepted:
+        if same("cash", "current_assets"):
             cash_val = p_accepted["cash"].value
             ca_val = p_accepted["current_assets"].value
             if cash_val > ca_val:
@@ -397,7 +456,7 @@ def detect_document_anomalies(
                 )
 
         # Current Assets > Total Assets
-        if "current_assets" in p_accepted and "total_assets" in p_accepted:
+        if same("current_assets", "total_assets"):
             ca_val = p_accepted["current_assets"].value
             ta_val = p_accepted["total_assets"].value
             if ca_val > ta_val:
@@ -426,7 +485,7 @@ def detect_document_anomalies(
                 )
 
         # Current Liabilities > Total Liabilities
-        if "current_liabilities" in p_accepted and "total_liabilities" in p_accepted:
+        if same("current_liabilities", "total_liabilities"):
             cl_val = p_accepted["current_liabilities"].value
             tl_val = p_accepted["total_liabilities"].value
             if cl_val > tl_val:
@@ -455,7 +514,7 @@ def detect_document_anomalies(
                 )
 
         # Operating Income > Gross Profit (when both positive)
-        if "operating_income" in p_accepted and "gross_profit" in p_accepted:
+        if same("operating_income", "gross_profit"):
             op_val = p_accepted["operating_income"].value
             gp_val = p_accepted["gross_profit"].value
             if op_val > gp_val and gp_val > 0:

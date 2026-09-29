@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -39,11 +39,24 @@ from app.models import (
 router = APIRouter(prefix="/companies", tags=["companies"])
 
 
+# The company's primary reporting currency: context only, never a fact's currency (each fact
+# keeps the currency its source states). "currency" is still accepted from older clients.
+ReportingCurrency = Annotated[
+    ShortLine | None,
+    Field(
+        default=None,
+        min_length=3,
+        max_length=3,
+        validation_alias=AliasChoices("reporting_currency", "currency"),
+    ),
+]
+
+
 class CompanyCreate(BaseModel):
     name: Annotated[Line, Field(min_length=1)]
     ticker: Annotated[ShortLine, Field(max_length=20)] | None = None
     country: Annotated[Line, Field(max_length=50)] | None = None
-    currency: Annotated[ShortLine, Field(min_length=3, max_length=3)] | None = None
+    reporting_currency: ReportingCurrency
     description: Paragraph | None = None
 
 
@@ -51,7 +64,7 @@ class CompanyUpdate(BaseModel):
     name: Annotated[Line, Field(min_length=1)] | None = None
     ticker: Annotated[ShortLine, Field(max_length=20)] | None = None
     country: Annotated[Line, Field(max_length=50)] | None = None
-    currency: Annotated[ShortLine, Field(min_length=3, max_length=3)] | None = None
+    reporting_currency: ReportingCurrency
     description: Paragraph | None = None
 
 
@@ -62,7 +75,7 @@ class CompanySummaryOut(BaseModel):
     name: str
     ticker: str | None
     country: str | None
-    currency: str | None
+    reporting_currency: str | None
     description: str | None
     document_count: int
     latest_period: str | None
@@ -80,7 +93,7 @@ class CompanyDetailOut(BaseModel):
     name: str
     ticker: str | None
     country: str | None
-    currency: str | None
+    reporting_currency: str | None
     description: str | None
     documents: list[DocumentOut]
     latest_period: str | None
@@ -124,7 +137,7 @@ def create_company(
         name=clean_name,
         ticker=body.ticker.upper() if body.ticker else None,
         country=body.country,
-        currency=body.currency.upper() if body.currency else None,
+        reporting_currency=body.reporting_currency.upper() if body.reporting_currency else None,
         description=body.description,
     )
     session.add(company)
@@ -146,7 +159,7 @@ def create_company(
         name=company.name,
         ticker=company.ticker,
         country=company.country,
-        currency=company.currency,
+        reporting_currency=company.reporting_currency,
         description=company.description,
         document_count=0,
         latest_period=None,
@@ -194,7 +207,7 @@ def list_companies(user_id: CurrentUserId, session: DbSession) -> list[CompanySu
                 name=c.name,
                 ticker=c.ticker,
                 country=c.country,
-                currency=c.currency,
+                reporting_currency=c.reporting_currency,
                 description=c.description,
                 document_count=len(docs),
                 latest_period=latest_period,
@@ -253,7 +266,7 @@ def get_company(
         name=company.name,
         ticker=company.ticker,
         country=company.country,
-        currency=company.currency,
+        reporting_currency=company.reporting_currency,
         description=company.description,
         documents=[DocumentOut.model_validate(d) for d in documents],
         latest_period=latest_period,
@@ -283,8 +296,8 @@ def update_company(
         company.ticker = body.ticker.upper() if body.ticker else None
     if body.country is not None:
         company.country = body.country
-    if body.currency is not None:
-        company.currency = body.currency.upper() if body.currency else None
+    if body.reporting_currency is not None:
+        company.reporting_currency = body.reporting_currency.upper()
     if body.description is not None:
         company.description = body.description
 
@@ -320,7 +333,7 @@ def update_company(
         name=company.name,
         ticker=company.ticker,
         country=company.country,
-        currency=company.currency,
+        reporting_currency=company.reporting_currency,
         description=company.description,
         document_count=doc_count,
         latest_period=None,

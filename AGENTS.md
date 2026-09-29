@@ -98,6 +98,10 @@ Financial values must preserve:
 
 A value without sufficient provenance must not be treated as authoritative.
 
+A fact's currency comes from its source document. A company's reporting currency is context only
+and never becomes or overrides a fact's currency. Values in different currencies are never
+converted or combined (docs/DATA_MODEL.md, "Currency").
+
 ## Evidence Rules
 
 Every evidence object should be traceable to:

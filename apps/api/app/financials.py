@@ -36,6 +36,7 @@ class DocumentRef(BaseModel):
     filename: str
     fiscal_year: int | None
     company_name: str | None
+    document_currency: str | None = None  # primary currency; facts keep their own
 
 
 class MetricRef(BaseModel):

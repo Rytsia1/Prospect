@@ -139,7 +139,9 @@ class Company(Base):
     name: Mapped[str] = mapped_column(String(200))
     ticker: Mapped[str | None] = mapped_column(String(20))
     country: Mapped[str | None] = mapped_column(String(50))
-    currency: Mapped[str | None] = mapped_column(String(3))
+    # The currency the company primarily reports in (e.g. IDR). Context only: it never sets or
+    # constrains a fact's currency, which comes from the source document.
+    reporting_currency: Mapped[str | None] = mapped_column(String(3))
     description: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
@@ -181,6 +183,9 @@ class Document(Base):
     # DOCUMENT_SCANNER=none. NULL until the worker reaches that stage. Never claims a scan that
     # did not happen.
     threat_scan: Mapped[str | None] = mapped_column(String(20))
+    # The currency most of the document's verified facts are stated in (set by the worker).
+    # NULL when unknown or mixed. Each fact keeps its own currency; this never overrides it.
+    document_currency: Mapped[str | None] = mapped_column(String(3))
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 
@@ -376,6 +381,20 @@ class FinancialFact(Base):
             "status NOT IN ('accepted', 'corrected') OR currency IS NOT NULL",
             name="ck_financial_facts_currency",
         ),
+        # How well the source supports the currency (app/extraction.py CurrencyStatus).
+        CheckConstraint(
+            "currency_status IN ('verified', 'inferred', 'missing', 'conflicting')",
+            name="ck_financial_facts_currency_status",
+        ),
+        CheckConstraint(
+            "(currency IS NULL) = (currency_status = 'missing')",
+            name="ck_financial_facts_currency_missing",
+        ),
+        # Only a verified currency (by the source or a reviewer) can be authoritative.
+        CheckConstraint(
+            "status NOT IN ('accepted', 'corrected') OR currency_status = 'verified'",
+            name="ck_financial_facts_currency_verified",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -386,7 +405,9 @@ class FinancialFact(Base):
     evidence_id: Mapped[uuid.UUID] = mapped_column()  # required: no fact without evidence
     # Full value in currency units (scale applied), sign preserved. NUMERIC, never float.
     value_numeric: Mapped[Decimal] = mapped_column(Numeric)
+    # The fact's own currency as the source states it; never the company's or the document's.
     currency: Mapped[str | None] = mapped_column(String(3))
+    currency_status: Mapped[str] = mapped_column(String(12))
     scale: Mapped[str] = mapped_column(String(16))  # presentation scale in the source
     original_text: Mapped[str] = mapped_column(String(100))  # the cell as printed, e.g. "(1,250)"
     original_unit: Mapped[str | None] = mapped_column(

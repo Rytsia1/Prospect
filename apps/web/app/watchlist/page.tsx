@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
-import { formatAmount } from "@/lib/documents";
+import { changeArrow, formatAmount, formatRatio } from "@/lib/documents";
 import { listWatchlist, removeFromWatchlist, type WatchlistEntry } from "@/lib/phase6";
 
 export default function WatchlistPage() {
@@ -82,14 +82,14 @@ export default function WatchlistPage() {
             </thead>
             <tbody className="divide-y divide-slate-200">
               {entries.map((item) => (
-                <tr key={item.id} className="hover:bg-slate-50">
+                <tr key={item.company_id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 text-amber-500">★</td>
                   <td className="px-4 py-3">
                     <Link
                       href={`/companies/${item.company_id}`}
                       className="font-medium text-slate-900 hover:underline"
                     >
-                      {item.company_name}
+                      {item.name}
                     </Link>
                     {item.ticker && (
                       <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
@@ -97,30 +97,21 @@ export default function WatchlistPage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-slate-600">{item.currency}</td>
+                  <td className="px-4 py-3 text-slate-600">{item.reporting_currency}</td>
                   <td className="px-4 py-3 text-right text-slate-600">
                     {item.latest_period || "—"}
                   </td>
                   <td className="px-4 py-3 text-right font-medium">
-                    {item.latest_revenue ? formatAmount(item.latest_revenue, item.currency) : "—"}
+                    {item.revenue ? formatAmount(item.revenue, item.currency) : "—"}
                   </td>
                   <td className="px-4 py-3 text-right font-medium">
-                    {item.latest_net_income
-                      ? formatAmount(item.latest_net_income, item.currency)
+                    {item.net_income
+                      ? formatAmount(item.net_income, item.net_income_currency)
                       : "—"}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {item.revenue_yoy_pct ? (
-                      <span
-                        className={`font-medium ${
-                          item.revenue_yoy_pct.startsWith("-")
-                            ? "text-rose-600"
-                            : "text-emerald-600"
-                        }`}
-                      >
-                        {item.revenue_yoy_pct.startsWith("-") ? "" : "+"}
-                        {item.revenue_yoy_pct}%
-                      </span>
+                    {item.revenue_yoy_change ? (
+                      <YoyChange ratio={item.revenue_yoy_change} />
                     ) : (
                       <span className="text-slate-400">—</span>
                     )}
@@ -169,5 +160,17 @@ export default function WatchlistPage() {
         investment opinions.
       </div>
     </div>
+  );
+}
+
+/** A change with its sign and a neutral arrow, as in the financials table (never colour alone). */
+function YoyChange({ ratio }: { ratio: string }) {
+  const text = formatRatio(ratio, "percent", true);
+  const arrow = changeArrow(text);
+  return (
+    <span className="font-medium text-slate-800">
+      {arrow && <span aria-hidden="true">{arrow} </span>}
+      {text}
+    </span>
   );
 }

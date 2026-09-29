@@ -35,6 +35,7 @@ from app.analytics import FactInput, calculate
 from app.config import get_settings
 from app.db import SessionLocal
 from app.documents import PDF_HEADER_WINDOW, PDF_MAGIC, remove_document
+from app.extraction import document_currency
 from app.logs import audit_event, configure_logging, security_event
 from app.models import (
     Calculation,
@@ -334,6 +335,7 @@ def _store(job_id: uuid.UUID, document_id: uuid.UUID, analysis: Analysis) -> Non
                 evidence_id=evidence.id,
                 value_numeric=c.amount.value,
                 currency=c.amount.currency,
+                currency_status=fact.currency_status,
                 scale=c.amount.scale,
                 original_text=c.amount.original_text[:100],
                 original_unit=c.unit_text,
@@ -402,6 +404,7 @@ def _store(job_id: uuid.UUID, document_id: uuid.UUID, analysis: Analysis) -> Non
         document = session.get_one(Document, document_id)
         document.status = DocumentStatus.READY
         document.processing_error = None
+        document.document_currency = document_currency(facts)
         job = session.get_one(ProcessingJob, job_id)
         job.status = JobStatus.SUCCEEDED
         job.last_error = None

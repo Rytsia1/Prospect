@@ -7,9 +7,14 @@ currency) → validation → facts, each pinned to the exact source row on its p
 Nothing is guessed: a row whose period, number format, or value cannot be read unambiguously is
 rejected; a value whose currency or scale is not stated, or that conflicts with another page, is
 kept only as needs_review and is never presented as a fact.
+
+Currency comes from the document only: the code on the value, else the page's unit statement
+(verified), else a currency the rest of the document declares (inferred, needs review). The
+company's reporting currency is never used, and nothing is converted.
 """
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -140,7 +145,11 @@ _VALUE_SUFFIX = {  # single-letter abbreviations only directly after a number
     "billions": _SCALE_WORDS["billions"] + r"|b",
     "trillions": _SCALE_WORDS["trillions"] + r"|tn|t",
 }
-_CURRENCY_WORDS = {"IDR": r"rupiah|rp\.?|idr", "USD": r"us\s?dollars?|us\$|usd"}
+_CURRENCY_WORDS = {
+    "IDR": r"rupiah|rp\.?|idr",
+    "USD": r"us\s?dollars?|us\$|usd",
+    "EUR": r"euros?|eur|€",
+}
 
 _MONTH_NAMES = [
     ("january", "januari", "jan"),
@@ -197,6 +206,13 @@ class Period:
     explicit_date: bool  # the end date is printed next to the figures, not inferred
 
 
+# How well the source supports a fact's currency (docs/DATA_MODEL.md, "Currency"):
+# verified: printed on the value or in the page's unit statement; inferred: stated only elsewhere in
+# the document; missing: not stated (currency is None, never guessed); conflicting: sources for the
+# same fact state different currencies. Only verified currencies can be accepted.
+CurrencyStatus = Literal["verified", "inferred", "missing", "conflicting"]
+
+
 @dataclass(frozen=True)
 class Amount:
     value: Decimal  # normalized: full value in currency units, sign preserved
@@ -220,6 +236,7 @@ class Candidate:
     source_kind: Literal["table_row", "text_line"]
     in_statement: bool  # found under a financial-statement heading
     review_reasons: list[str] = field(default_factory=list)
+    currency_status: CurrencyStatus = "verified"
 
 
 @dataclass(frozen=True)
@@ -230,6 +247,7 @@ class Fact:
     status: Literal["accepted", "needs_review"]
     confidence: Decimal
     review_reasons: list[str]
+    currency_status: CurrencyStatus
 
 
 @dataclass(frozen=True)
@@ -485,7 +503,7 @@ def match_metric(label: str) -> str | None:
 
 
 _AMOUNT = (
-    r"\(?\s*[-−–]?\s*(?:rp\.?\s?|idr\s?|us\$\s?|usd\s?)?[-−–]?\d[\d.,]*"
+    r"\(?\s*[-−–]?\s*(?:rp\.?\s?|idr\s?|us\$\s?|usd\s?|eur\s?|€\s?)?[-−–]?\d[\d.,]*"
     r"(?:\s?(?:trillion|billion|million|thousand|tn|bn|mn|t|b|m|k))?\s*\)?"
 )
 _AMOUNT_CELL = re.compile(rf"{_AMOUNT}|[-–—]", re.I)
@@ -525,6 +543,10 @@ def extract_candidates(
     }
     candidates: list[Candidate] = []
     rejections: list[Rejection] = []
+    # The one currency the document's unit statements declare, if exactly one: context for a
+    # page that states none. Never the company's reporting currency, which is not evidence.
+    declared = {u.currency for u in map(unit_statement, (p.text for p in pages)) if u.currency}
+    document_currency = declared.pop() if len(declared) == 1 else None
     for page in pages:
         # Per page, never per document: reports mix "12,400" and "12.400.000" styles across
         # sections, and applying one page's convention to another misreads values by 1000x.
@@ -591,6 +613,7 @@ def extract_candidates(
                             header_text,
                             units,
                             assignment[(page.number, block.index)] in statement_sections,
+                            document_currency,
                         )
                     )
     return candidates, rejections
@@ -624,6 +647,7 @@ def _candidate(
     header_text: str,
     units: UnitStatement,
     in_statement: bool,
+    document_currency: str | None = None,
 ) -> Candidate:
     reasons: list[str] = []
     scale, value = amount.scale, amount.value
@@ -634,10 +658,19 @@ def _candidate(
             scale, value = units.scale, value * SCALES[units.scale]
         else:
             reasons.append("unit scale not stated")
-    currency = amount.currency or units.currency
-    if amount.currency and units.currency and amount.currency != units.currency:
-        reasons.append("currency conflicts with the page's unit statement")
-    if currency is None:
+    # Strongest evidence first. A code printed on the value itself wins over the page's unit
+    # statement: a USD report can legitimately state one figure in EUR.
+    currency: str | None
+    status: CurrencyStatus
+    if amount.currency:
+        currency, status = amount.currency, "verified"
+    elif units.currency:
+        currency, status = units.currency, "verified"
+    elif document_currency and not units.conflicting:
+        currency, status = document_currency, "inferred"
+        reasons.append("currency inferred from other pages; not stated on this page")
+    else:
+        currency, status = None, "missing"
         reasons.append("currency not stated")
     if metric in NON_NEGATIVE and value < 0:
         reasons.append(f"negative {METRICS[metric][0].lower()}")
@@ -655,6 +688,7 @@ def _candidate(
         source_kind="table_row" if block.kind == "table" else "text_line",
         in_statement=in_statement,
         review_reasons=reasons,
+        currency_status=status,
     )
 
 
@@ -694,9 +728,12 @@ def build_facts(
         ranked = sorted(group, key=confidence, reverse=True)
         clean = [c for c in ranked if not c.review_reasons]
         chosen: list[tuple[Candidate, Literal["accepted", "needs_review"], list[str], Decimal]]
-        if len({c.amount.value for c in clean}) > 1:
+        # Currency is part of a value's identity: USD 14.82B and EUR 14.82B are not one value.
+        currency_conflict = len({c.amount.currency for c in clean}) > 1
+        if len({(c.amount.value, c.amount.currency) for c in clean}) > 1:
             pages_seen = ", ".join(str(p) for p in sorted({c.page_number for c in clean}))
-            reason = f"different values reported on pages {pages_seen}"
+            what = "currencies" if currency_conflict else "values"
+            reason = f"different {what} reported on pages {pages_seen}"
             chosen = [(c, "needs_review", [reason], confidence(c)) for c in clean]
         elif clean:  # one value, possibly repeated on several pages: keep the best source
             bonus = Decimal("0.03") if len(clean) > 1 else Decimal(0)
@@ -718,9 +755,18 @@ def build_facts(
                     status=status,
                     confidence=score,
                     review_reasons=reasons,
+                    currency_status="conflicting" if currency_conflict else c.currency_status,
                 )
             )
     return facts, rejections
+
+
+def document_currency(facts: list[Fact]) -> str | None:
+    """The document's primary currency: the one a strict majority of its verified facts use.
+    None when there are none or no majority; a document may legitimately use several."""
+    counts = Counter(f.candidate.amount.currency for f in facts if f.currency_status == "verified")
+    currency, n = counts.most_common(1)[0] if counts else (None, 0)
+    return currency if n * 2 > sum(counts.values()) else None
 
 
 def _chunk_for(c: Candidate, chunks: list[Chunk]) -> Chunk | None:

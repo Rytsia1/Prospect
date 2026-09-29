@@ -130,6 +130,16 @@ export function latestPeriod(fin: Financials): string | null {
   return [...fin.periods].reverse().find((p) => withValues.has(p)) ?? fin.periods.at(-1) ?? null;
 }
 
+/** The newest cell where `metric` has one agreed reported value; conflicts and values under
+ * review are skipped, never shown as the latest figure. */
+export function latestValueCell(fin: Financials, metric: string): Cell | undefined {
+  const index = indexFinancials(fin);
+  return [...fin.periods]
+    .reverse()
+    .map((p) => index.cell(metric, p))
+    .find((c) => c?.status === "value");
+}
+
 /** Integer representation of a decimal string, scaled by 10^digits (exact, no floats). */
 export function toScaled(value: string, digits = 4): bigint {
   const negative = value.startsWith("-");

@@ -25,7 +25,7 @@ from app.documents import (
     ShortLine,
 )
 from app.errors import ApiError
-from app.extraction import SCALES
+from app.extraction import SCALES, CurrencyStatus
 from app.models import (
     Document,
     DocumentPage,
@@ -49,6 +49,7 @@ class ReviewFactOut(BaseModel):
     metric_name: str
     value: DecimalStr
     currency: str | None
+    currency_status: CurrencyStatus
     scale: str
     original_text: str
     period_type: PeriodType
@@ -207,6 +208,7 @@ def list_facts_for_review(
             metric_name=metric_row.name,
             value=fact.value_numeric,
             currency=fact.currency,
+            currency_status=fact.currency_status,
             scale=fact.scale,
             original_text=fact.original_text,
             period_type=fact.period_type,
@@ -248,6 +250,7 @@ def accept_fact(
 
     before_status = fact.status.value
     fact.status = FactStatus.ACCEPTED
+    fact.currency_status = "verified"  # the reviewer confirmed it against the source
     session.add(
         ExtractionReview(
             document_id=doc.id,
@@ -293,6 +296,7 @@ def accept_fact(
         metric_name=m.name,
         value=f.value_numeric,
         currency=f.currency,
+        currency_status=f.currency_status,
         scale=f.scale,
         original_text=f.original_text,
         period_type=f.period_type,
@@ -387,6 +391,7 @@ def correct_fact(
     # Update fact
     fact.value_numeric = body.value
     fact.currency = new_currency
+    fact.currency_status = "verified"  # stated by the reviewer
     fact.scale = new_scale
     fact.period_type = new_period_type
     fact.period_label = new_period_label
@@ -432,6 +437,7 @@ def correct_fact(
         metric_name=m.name,
         value=f.value_numeric,
         currency=f.currency,
+        currency_status=f.currency_status,
         scale=f.scale,
         original_text=f.original_text,
         period_type=f.period_type,
@@ -512,6 +518,7 @@ def reject_fact(
         metric_name=m.name,
         value=f.value_numeric,
         currency=f.currency,
+        currency_status=f.currency_status,
         scale=f.scale,
         original_text=f.original_text,
         period_type=f.period_type,

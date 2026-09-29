@@ -25,9 +25,9 @@ Table = tuple[list[str], list[list[Value]]]
 
 FACT_COLUMNS = [
     "metric", "metric_name", "period", "period_as_printed", "period_type", "period_end",
-    "value", "currency", "unit", "scale_as_printed", "value_as_printed", "fact_status",
-    "timeline", "document", "source_page", "page_label", "section", "source_text",
-    "evidence_id", "evidence_link",
+    "value", "currency", "currency_status", "unit", "scale_as_printed", "value_as_printed",
+    "fact_status", "timeline", "document", "document_currency", "source_page", "page_label",
+    "section", "source_text", "evidence_id", "evidence_link",
 ]  # fmt: skip
 CALCULATION_COLUMNS = [
     "calculation", "name", "formula", "period", "period_type", "status", "value", "unit",
@@ -48,6 +48,7 @@ def tables(view: "Financials", periods: set[str], metrics: set[str]) -> dict[str
     """Sheets filtered by period and metric (an empty set means all)."""
     facts = {f.id: f for f in view.facts}
     names = {d.id: d.filename for d in view.documents}
+    document_currency = {d.id: d.document_currency for d in view.documents}
     timeline: dict[uuid.UUID, str] = {}
     for cell in view.cells:
         for fact_id in cell.fact_ids:
@@ -75,10 +76,10 @@ def tables(view: "Financials", periods: set[str], metrics: set[str]) -> dict[str
             continue
         fact_rows.append([
             f.metric, f.metric_name, period, f.period_label, f.period_type.value, f.period_end,
-            f.value, f.currency, "absolute", f.scale, f.original_text, f.status.value,
-            timeline.get(f.id, "not in annual timeline"), names[f.document_id],
-            f.evidence.page_number, f.evidence.page_label, f.evidence.section_title,
-            f.evidence.content, f.evidence.id, link(f),
+            f.value, f.currency, f.currency_status, "absolute", f.scale, f.original_text,
+            f.status.value, timeline.get(f.id, "not in annual timeline"), names[f.document_id],
+            document_currency[f.document_id], f.evidence.page_number, f.evidence.page_label,
+            f.evidence.section_title, f.evidence.content, f.evidence.id, link(f),
         ])  # fmt: skip
         evidence_rows.append([
             f.evidence.id, names[f.document_id], f.evidence.page_number, f.evidence.page_label,

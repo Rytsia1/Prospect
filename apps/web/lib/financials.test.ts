@@ -11,6 +11,7 @@ import {
   findCalculation,
   indexFinancials,
   latestPeriod,
+  latestValueCell,
   parseEvidenceKey,
   type Result,
 } from "./financials.ts";
@@ -52,6 +53,11 @@ const fin = {
 
 test("latest period is the newest one with a reported value, not one under review", () => {
   assert.equal(latestPeriod(fin), "FY2025");
+});
+
+test("a company's latest figure skips newer periods in conflict or under review", () => {
+  assert.equal(latestValueCell(fin, "revenue")?.period, "FY2025");
+  assert.equal(latestValueCell(fin, "net_income"), undefined);
 });
 
 test("period switching looks values up by metric and period", () => {

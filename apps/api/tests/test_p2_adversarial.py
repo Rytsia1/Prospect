@@ -432,8 +432,10 @@ FUZZ_TARGETS = [
                                       "margin_adjustment", "target_margin"]),
     ("POST", "/scenarios", ["document_id", "company_id", "name", "base_period",
                             "growth_adjustment", "margin_adjustment", "assumptions"]),
-    ("POST", "/companies", ["name", "ticker", "country", "currency", "description"]),
-    ("PATCH", "/companies/{company}", ["ticker", "country", "currency", "description"]),
+    ("POST", "/companies", ["name", "ticker", "country", "reporting_currency", "currency",
+                            "description"]),
+    ("PATCH", "/companies/{company}", ["ticker", "country", "reporting_currency", "currency",
+                                       "description"]),
     ("POST", "/companies/{company}/documents", ["document_id"]),
     ("POST", "/watchlist", ["company_id"]),
 ]  # fmt: skip

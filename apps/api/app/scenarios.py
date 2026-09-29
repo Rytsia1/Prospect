@@ -171,6 +171,13 @@ def _get_base_financials(
         )
     if rev_fact.value == 0:
         raise ApiError(422, "undefined_margin", "Base revenue is zero, so the margin is undefined.")
+    if rev_fact.currency != ni_fact.currency:  # no FX conversion: a cross-currency margin is wrong
+        raise ApiError(
+            422,
+            "incompatible_currencies",
+            f"Revenue ({rev_fact.currency}) and net income ({ni_fact.currency}) are in different "
+            "currencies, so the margin is undefined.",
+        )
     base_revenue = rev_fact.value
     base_net_income = ni_fact.value
     base_net_margin = CONTEXT.divide(base_net_income, base_revenue)

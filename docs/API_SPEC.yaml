@@ -893,7 +893,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/CompanyOut"
+                  $ref: "#/components/schemas/CompanySummaryOut"
     post:
       summary: Create a new company
       requestBody:
@@ -908,7 +908,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CompanyOut"
+                $ref: "#/components/schemas/CompanySummaryOut"
 
   /companies/{companyId}:
     get:
@@ -926,7 +926,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CompanyOut"
+                $ref: "#/components/schemas/CompanyDetailOut"
     patch:
       summary: Update company metadata
       parameters:
@@ -948,7 +948,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CompanyOut"
+                $ref: "#/components/schemas/CompanySummaryOut"
     delete:
       summary: Delete company (detaches associated documents)
       parameters:
@@ -980,11 +980,11 @@ paths:
               $ref: "#/components/schemas/CompanyDocumentAttach"
       responses:
         "200":
-          description: Updated company
+          description: The attached document
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CompanyOut"
+                $ref: "#/components/schemas/Document"
 
   /companies/{companyId}/documents/{documentId}:
     delete:
@@ -998,8 +998,12 @@ paths:
             format: uuid
         - $ref: "#/components/parameters/DocumentId"
       responses:
-        "204":
-          description: Document detached
+        "200":
+          description: The detached document (now standalone)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
 
   /watchlist:
     get:
@@ -1132,7 +1136,17 @@ components:
         currency:
           type: string
           nullable: true
-          description: ISO 4217; null only on needs_review items (never guessed)
+          description: >-
+            ISO 4217, the fact's own currency as its source states it (never the company's
+            reporting currency); null only when currency_status is missing (never guessed)
+        currency_status:
+          type: string
+          enum: [verified, inferred, missing, conflicting]
+          description: >-
+            verified: stated with the value or in its table/page unit statement (or confirmed by
+            a reviewer); inferred: stated only elsewhere in the document, needs review; missing:
+            not stated; conflicting: sources for the same fact state different currencies.
+            Accepted and corrected facts are always verified.
         scale:
           type: string
           enum: [units, thousands, millions, billions, trillions]
@@ -1586,6 +1600,13 @@ components:
           enum: [clean, not_scanned]
           nullable: true
           description: Threat scan result; null until the worker reaches the scan
+        document_currency:
+          type: string
+          nullable: true
+          readOnly: true
+          description: >-
+            The currency a strict majority of the document's verified facts use; null when
+            unknown or mixed. Each fact keeps its own currency, which may differ.
         created_at:
           type: string
           format: date-time
@@ -1717,7 +1738,10 @@ components:
           type: string
         status:
           type: string
-          enum: [added, removed, changed, unchanged]
+          enum: [added, removed, changed, unchanged, not_comparable]
+          description: >-
+            not_comparable: the two values are in different currencies; no change is computed
+            (Prospect does no FX conversion) and both originals are returned for review.
         is_restatement:
           type: boolean
           default: false
@@ -2122,9 +2146,13 @@ components:
         country:
           type: string
           nullable: true
-        currency:
+        reporting_currency:
           type: string
-          default: "IDR"
+          nullable: true
+          description: >-
+            ISO 4217 primary reporting currency (the web form defaults to IDR). Context only: it
+            never sets or constrains a fact's currency. The former name "currency" is still
+            accepted as input.
         description:
           type: string
           nullable: true
@@ -2140,21 +2168,21 @@ components:
         country:
           type: string
           nullable: true
-        currency:
+        reporting_currency:
           type: string
+          description: Primary reporting currency; the former name "currency" is still accepted
         description:
           type: string
           nullable: true
 
-    CompanyOut:
+    CompanySummaryOut:
+      description: GET /companies, POST /companies, PATCH /companies/{companyId}
       type: object
-      required: [id, user_id, name, currency, created_at, updated_at]
+      required: [id, name, ticker, country, reporting_currency, description, document_count, latest_period, is_in_watchlist, created_at, updated_at]
       properties:
         id:
           type: string
           format: uuid
-        user_id:
-          type: string
         name:
           type: string
         ticker:
@@ -2163,30 +2191,72 @@ components:
         country:
           type: string
           nullable: true
-        currency:
+        reporting_currency:
           type: string
+          nullable: true
+          description: The company's primary reporting currency (context only; facts keep their own)
         description:
           type: string
           nullable: true
+        document_count:
+          type: integer
+        latest_period:
+          type: string
+          nullable: true
+        is_in_watchlist:
+          type: boolean
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+
+    CompanyDetailOut:
+      description: >-
+        GET /companies/{companyId}. Figures are read from `financials` (company scope), each fact
+        with its own currency and evidence; there are no summary amount fields.
+      type: object
+      required: [id, name, ticker, country, reporting_currency, description, documents, latest_period, is_in_watchlist, financials, scenario_count, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        ticker:
+          type: string
+          nullable: true
+        country:
+          type: string
+          nullable: true
+        reporting_currency:
+          type: string
+          nullable: true
+          description: The company's primary reporting currency (context only; facts keep their own)
+        description:
+          type: string
+          nullable: true
         documents:
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/Document"
         latest_period:
           type: string
           nullable: true
-        latest_revenue:
-          type: string
+        is_in_watchlist:
+          type: boolean
+        financials:
+          $ref: "#/components/schemas/Financials"
           nullable: true
-        latest_net_income:
+        scenario_count:
+          type: integer
+        created_at:
           type: string
-          nullable: true
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     CompanyDocumentAttach:
       type: object
@@ -2205,39 +2275,62 @@ components:
           format: uuid
 
     WatchlistEntryOut:
+      description: >-
+        GET /watchlist, POST /watchlist. Each amount carries the currency its source states;
+        amounts in different currencies are never converted or compared.
       type: object
-      required: [id, user_id, company_id, created_at, company_name, currency]
+      required: [company_id, name, ticker, country, reporting_currency, currency, latest_period, revenue, revenue_formatted, net_income, net_income_currency, net_income_formatted, revenue_yoy_change, revenue_yoy_change_formatted, created_at]
       properties:
-        id:
-          type: string
-          format: uuid
-        user_id:
-          type: string
         company_id:
           type: string
           format: uuid
-        created_at:
-          type: string
-          format: date-time
-        company_name:
+        name:
           type: string
         ticker:
           type: string
           nullable: true
+        country:
+          type: string
+          nullable: true
+        reporting_currency:
+          type: string
+          nullable: true
+          description: The company's primary reporting currency (context only)
         currency:
           type: string
+          nullable: true
+          description: The currency of `revenue`, as its source states it
         latest_period:
           type: string
           nullable: true
-        latest_revenue:
+        revenue:
           type: string
           nullable: true
-        latest_net_income:
+          description: Decimal string, full currency units
+        revenue_formatted:
           type: string
           nullable: true
-        revenue_yoy_pct:
+        net_income:
           type: string
           nullable: true
+          description: Decimal string, full currency units
+        net_income_currency:
+          type: string
+          nullable: true
+          description: The currency of `net_income`; may differ from revenue's, never converted
+        net_income_formatted:
+          type: string
+          nullable: true
+        revenue_yoy_change:
+          type: string
+          nullable: true
+          description: Plain ratio (e.g. "0.148"); null when the two years are in different currencies
+        revenue_yoy_change_formatted:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
 
     AuditEventOut:
       type: object

@@ -26,6 +26,7 @@ export type ProspectDocument = {
   created_at: string;
   updated_at: string;
   delete_after?: string | null; // when retention deletes it; null: retention off
+  document_currency?: string | null; // primary currency of its facts; null: unknown or mixed
 };
 
 export const DOCUMENT_TYPE_LABEL: Record<DocumentType, string> = {
@@ -128,7 +129,10 @@ export type FinancialFact = {
   metric: string;
   metric_name: string;
   value: string; // decimal string, full value in currency units; never parsed into a float
-  currency: string | null;
+  currency: string | null; // the fact's own currency, as its source states it
+  // verified: stated with the value or its table; inferred: stated only elsewhere in the
+  // document (needs review); missing: not stated (currency is null); conflicting: sources differ.
+  currency_status?: "verified" | "inferred" | "missing" | "conflicting";
   scale: string;
   original_text: string;
   period_type: "annual" | "quarter" | "interim" | "instant";

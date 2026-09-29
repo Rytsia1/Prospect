@@ -40,11 +40,13 @@ class WatchlistCompanyOut(BaseModel):
     name: str
     ticker: str | None
     country: str | None
-    currency: str | None
+    reporting_currency: str | None  # the company's primary reporting currency (context only)
+    currency: str | None  # the currency of `revenue`, as its source states it
     latest_period: str | None
     revenue: DecimalStr | None
     revenue_formatted: str | None
     net_income: DecimalStr | None
+    net_income_currency: str | None  # may differ from revenue's; never converted
     net_income_formatted: str | None
     revenue_yoy_change: DecimalStr | None  # ratio (e.g. 0.148 for +14.8%)
     revenue_yoy_change_formatted: str | None  # "+14.8%"
@@ -87,8 +89,9 @@ def _build_watchlist_item(
 
     latest_period: str | None = None
     rev_val: Decimal | None = None
-    curr_str: str | None = company.currency
+    curr_str: str | None = None  # revenue's own currency, never the company's
     ni_val: Decimal | None = None
+    ni_currency: str | None = None
     yoy_change: Decimal | None = None
 
     if docs:
@@ -107,9 +110,10 @@ def _build_watchlist_item(
             latest_rev = revenue_facts[-1]
             latest_period = latest_rev.period_label
             rev_val = latest_rev.value
-            curr_str = latest_rev.currency or curr_str
+            curr_str = latest_rev.currency
             if latest_period in ni_facts:
                 ni_val = ni_facts[latest_period].value
+                ni_currency = ni_facts[latest_period].currency
 
             # Deterministic YoY change if previous year exists
             if len(revenue_facts) >= 2:
@@ -118,6 +122,7 @@ def _build_watchlist_item(
                     latest_rev.fiscal_year is not None
                     and prev_rev.fiscal_year is not None
                     and latest_rev.fiscal_year == prev_rev.fiscal_year + 1
+                    and latest_rev.currency == prev_rev.currency  # no FX: else not comparable
                     and prev_rev.value != 0
                 ):
                     diff = CONTEXT.subtract(latest_rev.value, prev_rev.value)
@@ -134,12 +139,14 @@ def _build_watchlist_item(
         name=company.name,
         ticker=company.ticker,
         country=company.country,
+        reporting_currency=company.reporting_currency,
         currency=curr_str,
         latest_period=latest_period,
         revenue=rev_val,
         revenue_formatted=_format_amount(rev_val, curr_str),
         net_income=ni_val,
-        net_income_formatted=_format_amount(ni_val, curr_str),
+        net_income_currency=ni_currency,
+        net_income_formatted=_format_amount(ni_val, ni_currency),
         revenue_yoy_change=yoy_change,
         revenue_yoy_change_formatted=yoy_formatted,
         created_at=created_at,

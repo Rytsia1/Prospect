@@ -54,8 +54,21 @@ ResearchSession
 | storage_key | VARCHAR | private object key |
 | status | ENUM | UPLOADING, UPLOADED, QUEUED, PROCESSING, EXTRACTING, INDEXING, READY, FAILED |
 | processing_error | TEXT | nullable |
+| document_currency | CHAR(3) | nullable; the currency a strict majority of the document's verified facts use (set by the worker). NULL when unknown or mixed. Never overrides a fact's currency |
 | created_at | TIMESTAMP | required |
 | updated_at | TIMESTAMP | required |
+
+### companies
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID | PK |
+| user_id | UUID | FK users; unique (user_id, name) |
+| name | VARCHAR(200) | required |
+| ticker | VARCHAR(20) | nullable |
+| country | VARCHAR(50) | nullable; the web form defaults to ID |
+| reporting_currency | CHAR(3) | nullable; the company's primary reporting currency (the web form defaults to IDR). Context only: never sets or constrains a fact's currency. Renamed from `currency` in migration 0010 (values kept) |
+| description | TEXT | nullable |
 
 ### processing_jobs
 
@@ -144,7 +157,8 @@ Metric definitions.
 | metric_id | UUID | FK financial_metrics |
 | evidence_id | UUID | required; composite FK (evidence_id, document_id) → evidence |
 | value_numeric | NUMERIC | full value in currency units (scale applied), sign preserved |
-| currency | CHAR(3) | nullable; required when status = accepted (never guessed) |
+| currency | CHAR(3) | the fact's own currency as its source states it; NULL only when currency_status = missing (never guessed) |
+| currency_status | VARCHAR(12) | verified / inferred / missing / conflicting (see "Currency" below); accepted and corrected facts must be verified |
 | scale | VARCHAR | units/thousands/millions/billions/trillions as printed in the source |
 | original_text | VARCHAR | the value exactly as printed, e.g. "(1,250)" |
 | original_unit | TEXT | the unit statement the scale came from, e.g. "(expressed in millions of Rupiah)" |
@@ -160,6 +174,33 @@ Metric definitions.
 | created_at | TIMESTAMP | required |
 
 Unique: one accepted fact per (document, metric, period_type, period_label).
+
+#### Currency
+
+Three different things, which may legitimately differ:
+
+| Field | Meaning |
+|---|---|
+| `Company.reporting_currency` | the currency the company primarily reports in, e.g. IDR. Context only |
+| `Document.document_currency` | the primary currency of one document, e.g. USD for an IDR company's US-dollar report. NULL when unknown or mixed |
+| `FinancialFact.currency` | the currency of that one value, e.g. EUR for an acquisition price inside a USD report. Authoritative for the fact |
+
+Extraction (app/extraction.py) takes the currency from the document only, strongest first:
+
+1. a code or symbol printed on the value itself (`EUR 5.2bn`) → verified;
+2. the table's or page's unit statement (`in millions of USD`) → verified;
+3. a single currency declared elsewhere in the document → inferred, needs review;
+4. nothing → currency NULL, missing, needs review. Never guessed; the company's reporting
+   currency is never used.
+
+The same metric and period reported in different currencies is a conflict (`conflicting`, needs
+review; `CURRENCY_CONFLICT` in data quality), never one value. Different metrics in different
+currencies are not a conflict.
+
+Nothing is converted. Calculations, reconciliation, year-over-year changes, scenarios, data-quality
+comparisons and document diffs refuse to combine values in different currencies (a diff marks them
+`not_comparable`). Exports carry value, currency, currency_status, scale and document_currency as
+stored. An FX layer, if ever added, must be a separate derived view that leaves these untouched.
 
 ### evidence
 

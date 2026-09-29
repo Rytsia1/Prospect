@@ -291,7 +291,9 @@ Every extracted value should include:
 
 - metric name;
 - value;
-- currency;
+- currency, as the source document states it for that value (with a status: verified,
+  inferred, missing or conflicting). A company's reporting currency, e.g. IDR, is context only
+  and never replaces it; a document can mix currencies, and values are never converted;
 - unit / scale;
 - fiscal period;
 - source document;
@@ -676,6 +678,7 @@ Chat Message
   "metric": "net_income",
   "value": "1740000000000",
   "currency": "IDR",
+  "currency_status": "verified",
   "scale": "units",
   "period": "FY2025",
   "document_id": "annual-report-2025",

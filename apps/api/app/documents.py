@@ -32,6 +32,7 @@ from app.auth import CurrentUserId, limit_user
 from app.config import get_settings
 from app.db import get_session
 from app.errors import ApiError
+from app.extraction import CurrencyStatus
 from app.logs import audit_event, security_event
 from app.models import (
     AuditEvent,
@@ -155,6 +156,9 @@ class DocumentOut(BaseModel):
     status: DocumentStatus
     processing_error: str | None
     threat_scan: str | None = None  # clean | not_scanned; null until the worker scans it
+    # Primary currency of the document's verified facts; null if unknown or mixed. Each fact
+    # carries its own currency, which may differ.
+    document_currency: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -244,7 +248,8 @@ class FactOut(BaseModel):
     metric: str
     metric_name: str
     value: DecimalStr  # full value in currency units, sign preserved
-    currency: str | None
+    currency: str | None  # the fact's own currency, as the source states it
+    currency_status: CurrencyStatus
     scale: str  # the scale the source printed the value in
     original_text: str
     period_type: PeriodType
@@ -648,6 +653,7 @@ def _facts(
             metric_name=metric.name,
             value=fact.value_numeric,
             currency=fact.currency,
+            currency_status=fact.currency_status,
             scale=fact.scale,
             original_text=fact.original_text,
             period_type=fact.period_type,

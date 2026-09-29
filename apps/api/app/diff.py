@@ -48,7 +48,9 @@ class FinancialDiffItem(BaseModel):
     metric: str
     metric_name: str
     period: str
-    status: Literal["added", "removed", "changed", "unchanged"]
+    # not_comparable: the two values are in different currencies. Prospect does no FX
+    # conversion, so there is no change to compute; both originals are kept for review.
+    status: Literal["added", "removed", "changed", "unchanged", "not_comparable"]
     is_restatement: bool = False
     notes: list[str] = Field(default_factory=list)
     value_a: DecimalStr | None
@@ -248,13 +250,13 @@ def compute_document_diff(
                 pct_change: Decimal | None = None
                 if fa.value != 0:
                     pct_change = CONTEXT.divide(diff_abs, abs(fa.value))
-                status: Literal["changed", "unchanged"] = (
+                status: Literal["changed", "unchanged", "not_comparable"] = (
                     "unchanged" if diff_abs == 0 and scale_match else "changed"
                 )
             else:
                 diff_abs = None
                 pct_change = None
-                status = "changed"
+                status = "not_comparable"
 
             financial_diff.append(
                 FinancialDiffItem(

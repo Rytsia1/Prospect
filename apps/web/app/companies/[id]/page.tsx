@@ -3,19 +3,19 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { CellValue } from "@/components/financial-values";
 import { ApiError, api } from "@/lib/api";
-import { formatAmount, type ProspectDocument } from "@/lib/documents";
+import type { ProspectDocument } from "@/lib/documents";
+import { indexFinancials, latestValueCell } from "@/lib/financials";
 import {
   addToWatchlist,
   attachDocumentToCompany,
-  type Company,
+  type CompanyDetail,
   deleteCompany,
   detachDocumentFromCompany,
   getCompany,
-  listWatchlist,
   removeFromWatchlist,
   updateCompany,
-  type WatchlistEntry,
 } from "@/lib/phase6";
 
 export default function CompanyDetailPage() {
@@ -23,7 +23,7 @@ export default function CompanyDetailPage() {
   const router = useRouter();
   const companyId = params?.id as string;
 
-  const [company, setCompany] = useState<Company | null>(null);
+  const [company, setCompany] = useState<CompanyDetail | null>(null);
   const [allDocs, setAllDocs] = useState<ProspectDocument[]>([]);
   const [isWatchlist, setIsWatchlist] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -44,13 +44,12 @@ export default function CompanyDetailPage() {
     if (!companyId) return;
     try {
       setLoading(true);
-      const [comp, wl, docsRes] = await Promise.all([
+      const [comp, docsRes] = await Promise.all([
         getCompany(companyId),
-        listWatchlist(),
         api<{ items: ProspectDocument[] }>("/documents"),
       ]);
       setCompany(comp);
-      setIsWatchlist(wl.some((w: WatchlistEntry) => w.company_id === companyId));
+      setIsWatchlist(comp.is_in_watchlist);
       setAllDocs(docsRes.items);
       setEditName(comp.name);
       setEditTicker(comp.ticker || "");
@@ -157,6 +156,13 @@ export default function CompanyDetailPage() {
       </div>
     );
   }
+
+  // Latest agreed figures, each in its own currency with its source page (never the company's
+  // reporting currency, never converted).
+  const fin = company.financials;
+  const index = fin ? indexFinancials(fin) : null;
+  const revenue = fin ? latestValueCell(fin, "revenue") : undefined;
+  const netIncome = fin ? latestValueCell(fin, "net_income") : undefined;
 
   // Filter unattached documents for attachment
   const attachedDocIds = new Set(company.documents.map((d) => d.id));
@@ -304,18 +310,20 @@ export default function CompanyDetailPage() {
         <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
           <div className="text-xs uppercase text-slate-500">Latest Revenue</div>
           <div className="mt-1 text-2xl font-semibold tracking-tight">
-            {company.latest_revenue ? formatAmount(company.latest_revenue, company.currency) : "—"}
+            {revenue && index ? <CellValue cell={revenue} index={index} /> : "—"}
           </div>
-          <div className="mt-1 text-xs text-slate-400">Canonical reported fact</div>
+          <div className="mt-1 text-xs text-slate-400">
+            {revenue ? `Reported, ${revenue.period}` : "Canonical reported fact"}
+          </div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
           <div className="text-xs uppercase text-slate-500">Latest Net Income</div>
           <div className="mt-1 text-2xl font-semibold tracking-tight">
-            {company.latest_net_income
-              ? formatAmount(company.latest_net_income, company.currency)
-              : "—"}
+            {netIncome && index ? <CellValue cell={netIncome} index={index} /> : "—"}
           </div>
-          <div className="mt-1 text-xs text-slate-400">Canonical reported fact</div>
+          <div className="mt-1 text-xs text-slate-400">
+            {netIncome ? `Reported, ${netIncome.period}` : "Canonical reported fact"}
+          </div>
         </div>
       </div>
 

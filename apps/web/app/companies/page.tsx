@@ -3,19 +3,16 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
-import { formatAmount } from "@/lib/documents";
 import {
   addToWatchlist,
-  type Company,
+  type CompanySummary,
   createCompany,
   listCompanies,
-  listWatchlist,
   removeFromWatchlist,
-  type WatchlistEntry,
 } from "@/lib/phase6";
 
 export default function CompaniesPage() {
-  const [companies, setCompanies] = useState<Company[] | null>(null);
+  const [companies, setCompanies] = useState<CompanySummary[] | null>(null);
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -32,9 +29,9 @@ export default function CompaniesPage() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [comps, wl] = await Promise.all([listCompanies(), listWatchlist()]);
+      const comps = await listCompanies();
       setCompanies(comps);
-      setWatchlist(new Set(wl.map((w: WatchlistEntry) => w.company_id)));
+      setWatchlist(new Set(comps.filter((c) => c.is_in_watchlist).map((c) => c.id)));
       setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to load companies.");
@@ -56,7 +53,7 @@ export default function CompaniesPage() {
         name: name.trim(),
         ticker: ticker.trim() ? ticker.trim().toUpperCase() : null,
         country: country.trim() ? country.trim().toUpperCase() : null,
-        currency: currency.trim() ? currency.trim().toUpperCase() : "IDR",
+        reporting_currency: currency.trim() ? currency.trim().toUpperCase() : "IDR",
         description: description.trim() ? description.trim() : null,
       });
       setShowCreate(false);
@@ -229,8 +226,6 @@ export default function CompaniesPage() {
                 <th className="px-4 py-3">Country / Currency</th>
                 <th className="px-4 py-3 text-right">Filings</th>
                 <th className="px-4 py-3 text-right">Latest Period</th>
-                <th className="px-4 py-3 text-right">Latest Revenue</th>
-                <th className="px-4 py-3 text-right">Latest Net Income</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -264,17 +259,11 @@ export default function CompaniesPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-slate-600">
-                      {c.country || "—"} / {c.currency}
+                      {c.country || "—"} / {c.reporting_currency || "—"}
                     </td>
-                    <td className="px-4 py-3 text-right font-medium">{c.documents?.length || 0}</td>
+                    <td className="px-4 py-3 text-right font-medium">{c.document_count}</td>
                     <td className="px-4 py-3 text-right text-slate-600">
                       {c.latest_period || "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium">
-                      {c.latest_revenue ? formatAmount(c.latest_revenue, c.currency) : "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium">
-                      {c.latest_net_income ? formatAmount(c.latest_net_income, c.currency) : "—"}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <Link
