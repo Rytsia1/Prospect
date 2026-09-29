@@ -250,6 +250,11 @@ export function changeArrow(signedText: string): "▲" | "▼" | "" {
   return signedText.startsWith("+") ? "▲" : signedText.startsWith("−") ? "▼" : "";
 }
 
+/** Values from this document still waiting for review (company scope also holds other reports). */
+export function reviewLeft(facts: FinancialFact[], documentId: string): number {
+  return facts.filter((f) => f.document_id === documentId && f.status === "needs_review").length;
+}
+
 /** Hex SHA-256 of the file, sent with the upload so the server can verify the stored bytes. */
 export async function sha256Hex(data: ArrayBuffer): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));

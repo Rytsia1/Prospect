@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   changeArrow,
+  type FinancialFact,
   formatBytes,
   formatRatio,
   isSettled,
   MAX_UPLOAD_BYTES,
   processingStep,
+  reviewLeft,
   roundDecimal,
   validatePdf,
 } from "./documents.ts";
@@ -92,4 +94,11 @@ test("the progress steps follow the real statuses, and a failure has none", () =
   ).map(processingStep);
   assert.deepEqual(steps, [0, 1, 1, 2, 2, 3]);
   assert.equal(processingStep("FAILED"), null);
+});
+
+test("review count covers only this document's open values", () => {
+  const fact = (document_id: string, status: string) => ({ document_id, status }) as FinancialFact;
+  const facts = [fact("a", "needs_review"), fact("a", "accepted"), fact("b", "needs_review")];
+  assert.equal(reviewLeft(facts, "a"), 1);
+  assert.equal(reviewLeft([], "a"), 0);
 });

@@ -18,3 +18,14 @@
 body {
   font-variant-numeric: tabular-nums;
 }
+
+/* Touch screens: every control is at least 44px tall. Dense desktop tables keep their size. */
+@media (pointer: coarse) {
+  button,
+  select,
+  input:not([type="checkbox"]):not([type="radio"]),
+  summary,
+  nav a {
+    min-height: 44px;
+  }
+}

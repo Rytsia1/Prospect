@@ -21,6 +21,7 @@ import {
   formatDate,
   isSettled,
   type ProspectDocument,
+  reviewLeft,
 } from "@/lib/documents";
 import {
   evidenceKey,
@@ -192,6 +193,9 @@ export function DocumentDetail({ id, initial }: { id: string; initial: Workspace
     ["Document ID", document.id],
   ];
 
+  // Open review work stays visible where research starts; it counts down as values are reviewed.
+  const reviewCount = fin ? reviewLeft(fin.facts, document.id) : 0;
+
   return (
     <div className="space-y-6">
       {back}
@@ -203,7 +207,10 @@ export function DocumentDetail({ id, initial }: { id: string; initial: Workspace
             <nav aria-label="Research tools" className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
               {[
                 [`/data-quality?document_id=${document.id}`, "Data quality"],
-                ["/review", "Review figures"],
+                [
+                  "/review",
+                  reviewCount ? `⚠ Review figures (${reviewCount} left)` : "Review figures",
+                ],
                 ["/scenarios", "Scenarios"],
                 ["/diff", "Compare reports"],
               ].map(([href, label]) => (
