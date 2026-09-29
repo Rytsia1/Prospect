@@ -12,6 +12,10 @@ if context.config.config_file_name:
 
 connectable = create_engine(get_settings().database_url)
 with connectable.connect() as connection:
-    context.configure(connection=connection, target_metadata=Base.metadata)
+    # One transaction per revision: PostgreSQL only lets a later revision use an enum value that
+    # an earlier one added (ALTER TYPE ... ADD VALUE) once that revision has committed.
+    context.configure(
+        connection=connection, target_metadata=Base.metadata, transaction_per_migration=True
+    )
     with context.begin_transaction():
         context.run_migrations()

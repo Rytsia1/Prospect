@@ -26,7 +26,11 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: prospect
         ports: ["5432:5432"]
-        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+        # -U: the default user would be the runner's "root", which spams the log with role errors.
+        options: >-
+          --health-cmd "pg_isready -U postgres -d prospect"
+          --health-interval 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/prospect
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/prospect
