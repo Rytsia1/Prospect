@@ -6,10 +6,12 @@ Limits come from settings as "<requests>/<window seconds>" (RATE_LIMIT_*). Sessi
 counts per client IP; authenticated endpoints per user and, for uploads, completion and export,
 per client IP too (app/auth.limit_user), so a fresh anonymous session does not reset them.
 
-Client IP: browsers reach the API through the web app's proxy (apps/web/middleware.ts), which
-sends the visitor's IP in X-Prospect-Client-IP together with TRUSTED_PROXY_SECRET. Only a request
-carrying that secret may name an IP; any other request (a direct client, however it sets
-X-Forwarded-For / X-Real-IP / Forwarded) is counted by its TCP peer address.
+Client IP: outside Vercel, browsers reach the API through the web app's proxy
+(apps/web/middleware.ts), which sends the visitor's IP in X-Prospect-Client-IP together with
+TRUSTED_PROXY_SECRET. Only a request carrying that secret may name an IP; any other request (a
+direct client, however it sets X-Forwarded-For / X-Real-IP / Forwarded) is counted by its TCP peer
+address. On Vercel (VERCEL=1, set by the platform) Vercel's edge routes browsers to the API and
+sets X-Real-IP itself, so that header is the client (docs/ADR-006).
 
 ponytail: one Postgres upsert per limited request; move the counters to Redis (INCR + EXPIRE)
 if that write load ever shows up in database metrics.
@@ -79,13 +81,22 @@ PROXY_SECRET_HEADER, CLIENT_IP_HEADER = "X-Prospect-Proxy-Secret", "X-Prospect-C
 
 def client_ip(request: Request) -> str:
     peer = request.client.host if request.client else "unknown"
-    secret = get_settings().trusted_proxy_secret
+    settings = get_settings()
+    secret = settings.trusted_proxy_secret
     sent = request.headers.get(PROXY_SECRET_HEADER, "")
     # bytes: compare_digest refuses non-ASCII str, and header values can be any latin-1 text
-    if secret is None or not hmac.compare_digest(sent.encode(), secret.get_secret_value().encode()):
+    if secret is not None and hmac.compare_digest(
+        sent.encode(), secret.get_secret_value().encode()
+    ):
+        named = request.headers.get(CLIENT_IP_HEADER, "")  # from our web proxy
+    elif settings.vercel:
+        # On Vercel every request arrives through its edge, which sets X-Real-IP to the client's
+        # address itself (a browser cannot choose it); the TCP peer is Vercel's infrastructure.
+        named = request.headers.get("X-Real-IP", "")
+    else:
         return peer
-    try:  # from our proxy: still only a well-formed address is accepted
-        return str(ipaddress.ip_address(request.headers.get(CLIENT_IP_HEADER, "").strip()))
+    try:  # still only a well-formed address is accepted
+        return str(ipaddress.ip_address(named.strip()))
     except ValueError:
         return peer
 

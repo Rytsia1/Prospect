@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # may name the client IP (X-Prospect-Client-IP). Everyone else is rate limited by the TCP
     # peer address, so a direct client cannot spoof its IP.
     trusted_proxy_secret: SecretStr | None = None
+    # VERCEL=1 is set by the platform itself (never in the repo): the API runs as the `api`
+    # service of the Vercel project (vercel.json, docs/ADR-006). Its edge then routes browsers
+    # straight to the API and sets X-Real-IP itself, so no web proxy and no proxy secret exist.
+    vercel: bool = False
     session_ttl_seconds: int = 86_400
     # The session cookie is HttpOnly, SameSite=Strict, Path=/ and, when secure, Secure with the
     # __Host- prefix. Production requires secure; only plain-http local development turns it off.
@@ -216,7 +220,8 @@ def api_problems(settings: Settings) -> list[str]:
     problems = []
     if settings.app_secret is None:
         problems.append("APP_SECRET is required")
-    if settings.environment == "production" and settings.trusted_proxy_secret is None:
+    on_proxy = not settings.vercel  # on Vercel the edge names the client (app/ratelimit.py)
+    if settings.environment == "production" and on_proxy and settings.trusted_proxy_secret is None:
         problems.append(
             "TRUSTED_PROXY_SECRET is required in production (else every browser shares the "
             "proxy's IP for rate limits)"

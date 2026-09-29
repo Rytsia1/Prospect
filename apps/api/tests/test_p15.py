@@ -95,6 +95,20 @@ def test_trusted_proxy_names_the_client(tune):
         assert client_ip(request_with(via_proxy(junk))) == "10.1.2.3"
 
 
+def test_on_vercel_the_edge_set_real_ip_names_the_client(tune):
+    # docs/ADR-006: Vercel's edge routes browsers straight to the API and sets X-Real-IP itself.
+    tune(trusted_proxy_secret=None, vercel=True)
+    assert client_ip(request_with({"X-Real-IP": "203.0.113.9"})) == "203.0.113.9"
+    assert client_ip(request_with({"X-Real-IP": "2001:db8::9"})) == "2001:db8::9"
+    for junk in ("not-an-ip", "1.2.3.4, 5.6.7.8", ""):  # only a well-formed address
+        assert client_ip(request_with({"X-Real-IP": junk})) == "10.1.2.3"
+    # Other forwarding headers and the proxy's own header still name no one.
+    others = {k: v for k, v in SPOOFS.items() if k != "X-Real-IP"}
+    assert client_ip(request_with(others)) == "10.1.2.3"
+    tune(vercel=False)  # anywhere else X-Real-IP is whatever the client sent
+    assert client_ip(request_with({"X-Real-IP": "203.0.113.9"})) == "10.1.2.3"
+
+
 def test_spoofed_headers_cannot_escape_the_session_rate_limit(tune):
     tune(trusted_proxy_secret=SecretStr(PROXY), rate_limit_sessions="2/60")
     statuses = [
@@ -486,6 +500,8 @@ def test_api_needs_its_secrets_the_worker_does_not(monkeypatch):
         "IP for rate limits)",
     ]
     assert api_problems(production(trusted_proxy_secret=STRONG[::-1])) == []
+    # On Vercel there is no web proxy, so there is no proxy secret to require (docs/ADR-006).
+    assert api_problems(production(vercel=True)) == []
 
 
 @pytest.mark.parametrize(

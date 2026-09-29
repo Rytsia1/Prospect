@@ -2,11 +2,16 @@ import { type NextRequest, NextResponse } from "next/server";
 import { contentSecurityPolicy, originOnly } from "@/lib/csp";
 import { proxyHeaders } from "@/lib/proxy";
 
-const API_ORIGIN = process.env.API_ORIGIN ?? "http://localhost:8000";
+// Where this app proxies /api/v1. Unset on Vercel with the `api` service: vercel.json routes
+// /api/* to it before this app sees the request (docs/ADR-006). next.config.ts requires it for
+// other production builds; development defaults to a local API.
+const API_ORIGIN =
+  process.env.API_ORIGIN ??
+  (process.env.NODE_ENV === "production" ? undefined : "http://localhost:8000");
 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
-  if (pathname.startsWith("/api/v1/")) {
+  if (API_ORIGIN && pathname.startsWith("/api/v1/")) {
     // Same-origin API proxy: the browser never talks to the API directly, and only this proxy
     // can tell the API who the visitor is (lib/proxy.ts). The PDF itself never comes through
     // here: it goes straight from the browser to storage with a signed URL.
