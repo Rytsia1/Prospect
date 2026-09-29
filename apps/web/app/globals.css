@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Dark mode is a class on <html> (set from the theme cookie in layout.tsx), not the OS setting:
+   light is the default and the user chooses. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Evidence categories (docs/UX_SPEC.md §2). Always paired with a text label, never color alone. */
 @theme {
   --color-fact: #1e40af;
@@ -8,6 +12,8 @@
   /* Primary actions only; distinct from the evidence colours. White on it: 7.9:1. */
   --color-accent: #4338ca;
   --color-accent-hover: #3730a3;
+  /* Page and card background (bg-surface would also flip text-white on buttons). */
+  --color-surface: #fff;
 }
 
 /* IBM Plex Sans, self-hosted by next/font (layout.tsx), so the CSP's font-src 'self' holds. */
@@ -28,4 +34,64 @@ body {
   nav a {
     min-height: 44px;
   }
+}
+
+/* Dark theme. Components keep their light-mode classes: the palette itself is redefined here,
+   slate mirrored (light text on dark surfaces) and the tint hues swapped end for end (tint
+   backgrounds <-> strong text), using Tailwind's own values. Mid shades (300-600) keep their
+   value so filled buttons with white text still contrast. */
+.dark {
+  color-scheme: dark;
+  --color-surface: oklch(12.9% 0.042 264.695);
+  --color-slate-50: oklch(17.5% 0.042 265);
+  --color-slate-100: oklch(20.8% 0.042 265.755);
+  --color-slate-200: oklch(27.9% 0.041 260.031);
+  --color-slate-300: oklch(37.2% 0.044 257.287);
+  --color-slate-400: oklch(55.4% 0.046 257.417);
+  --color-slate-500: oklch(70.4% 0.04 256.788);
+  --color-slate-600: oklch(80% 0.03 255);
+  --color-slate-700: oklch(86.9% 0.022 252.894);
+  --color-slate-800: oklch(92.9% 0.013 255.508);
+  --color-slate-900: oklch(96.8% 0.007 247.896);
+  --color-fact: #93c5fd;
+  --color-calc: #6ee7b7;
+  --color-interp: #fcd34d;
+  --color-red-50: oklch(25.8% 0.092 26.042);
+  --color-red-100: oklch(39.6% 0.141 25.723);
+  --color-red-200: oklch(44.4% 0.177 26.899);
+  --color-red-700: oklch(80.8% 0.114 19.571);
+  --color-red-800: oklch(88.5% 0.062 18.334);
+  --color-red-900: oklch(93.6% 0.032 17.717);
+  --color-rose-50: oklch(27.1% 0.105 12.094);
+  --color-rose-100: oklch(41% 0.159 10.272);
+  --color-rose-200: oklch(45.5% 0.188 13.697);
+  --color-rose-700: oklch(81% 0.117 11.638);
+  --color-rose-800: oklch(89.2% 0.058 10.001);
+  --color-rose-900: oklch(94.1% 0.03 12.58);
+  --color-amber-50: oklch(27.9% 0.077 45.635);
+  --color-amber-100: oklch(41.4% 0.112 45.904);
+  --color-amber-200: oklch(47.3% 0.137 46.201);
+  --color-amber-700: oklch(87.9% 0.169 91.605);
+  --color-amber-800: oklch(92.4% 0.12 95.746);
+  --color-amber-900: oklch(96.2% 0.059 95.617);
+  --color-emerald-50: oklch(26.2% 0.051 172.552);
+  --color-emerald-100: oklch(37.8% 0.077 168.94);
+  --color-emerald-200: oklch(43.2% 0.095 166.913);
+  --color-emerald-700: oklch(84.5% 0.143 164.978);
+  --color-emerald-800: oklch(90.5% 0.093 164.15);
+  --color-emerald-900: oklch(95% 0.052 163.051);
+  --color-blue-50: oklch(28.2% 0.091 267.935);
+  --color-blue-100: oklch(37.9% 0.146 265.522);
+  --color-blue-200: oklch(42.4% 0.199 265.638);
+  --color-blue-700: oklch(80.9% 0.105 251.813);
+  --color-blue-800: oklch(88.2% 0.059 254.128);
+  --color-blue-900: oklch(93.2% 0.032 255.585);
+}
+
+/* Theme switch: the new theme grows as a circle from the toggle (theme-toggle.tsx drives it
+   with the View Transitions API). No animation for prefers-reduced-motion or older browsers. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
 }

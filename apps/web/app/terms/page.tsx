@@ -63,7 +63,7 @@ export default function TermsOfUsePage() {
         className="rounded-lg border-2 border-slate-300 bg-slate-50 p-6 space-y-4"
       >
         <div className="flex items-center gap-2">
-          <span className="rounded bg-slate-900 px-2 py-0.5 text-xs font-semibold uppercase text-white">
+          <span className="rounded bg-slate-900 px-2 py-0.5 text-xs font-semibold uppercase text-white dark:text-slate-950">
             Mandatory Disclaimer
           </span>
           <h2 id="financial-disclaimer-heading" className="text-lg font-semibold text-slate-900">

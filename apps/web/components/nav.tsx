@@ -75,7 +75,7 @@ export function Nav() {
             ▾
           </span>
         </summary>
-        <ul className="absolute right-0 z-30 mt-1 w-48 rounded border border-slate-200 bg-white py-1 shadow-lg">
+        <ul className="absolute right-0 z-30 mt-1 w-48 rounded border border-slate-200 bg-surface py-1 shadow-lg">
           {MORE.map(({ href, label }) => {
             const active = isActive(pathname, href);
             return (

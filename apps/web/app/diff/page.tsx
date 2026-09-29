@@ -99,7 +99,7 @@ export default function DiffPage() {
                 id="doc-a"
                 value={docAId}
                 onChange={(e) => setDocAId(e.target.value)}
-                className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                className="mt-1 w-full rounded border border-slate-300 bg-surface px-3 py-2 text-sm"
               >
                 {documents.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -122,7 +122,7 @@ export default function DiffPage() {
                 id="doc-b"
                 value={docBId}
                 onChange={(e) => setDocBId(e.target.value)}
-                className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                className="mt-1 w-full rounded border border-slate-300 bg-surface px-3 py-2 text-sm"
               >
                 {documents.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -149,7 +149,7 @@ export default function DiffPage() {
       {diffResult && (
         <div className="space-y-6">
           {/* Metadata Comparison Summary */}
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="rounded-lg border border-slate-200 bg-surface p-4">
             <h2 className="text-sm font-semibold text-slate-800 mb-2">Metadata Comparison</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div className="rounded border border-slate-100 bg-slate-50 p-3">
@@ -350,7 +350,7 @@ export default function DiffPage() {
               {diffResult.text_diff.map((td) => (
                 <div
                   key={td.section_title}
-                  className="rounded-lg border border-slate-200 bg-white p-4"
+                  className="rounded-lg border border-slate-200 bg-surface p-4"
                 >
                   <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                     <h3 className="text-sm font-semibold text-slate-900">{td.section_title}</h3>
@@ -364,7 +364,7 @@ export default function DiffPage() {
                       No textual differences found in this section.
                     </div>
                   ) : (
-                    <pre className="mt-3 max-h-64 overflow-auto rounded bg-slate-950 p-3 font-mono text-xs leading-relaxed text-slate-200">
+                    <pre className="mt-3 max-h-64 overflow-auto rounded bg-slate-950 p-3 font-mono text-xs leading-relaxed text-slate-200 dark:text-slate-800">
                       {td.unified_diff.map((line, lIdx) => (
                         <div
                           // biome-ignore lint/suspicious/noArrayIndexKey: diff lines have no natural id other than line position

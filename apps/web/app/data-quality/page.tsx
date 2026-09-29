@@ -74,7 +74,7 @@ export default function DataQualityPage() {
         <button
           type="button"
           onClick={load}
-          className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          className="rounded border border-slate-300 bg-surface px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
         >
           ⟳ Re-run Quality Checks
         </button>
@@ -137,7 +137,7 @@ export default function DataQualityPage() {
             id="filter-sev"
             value={severityFilter}
             onChange={(e) => setSeverityFilter(e.target.value)}
-            className="rounded border border-slate-300 bg-white px-2 py-1"
+            className="rounded border border-slate-300 bg-surface px-2 py-1"
           >
             <option value="">All Severities</option>
             <option value="error">Error (✕)</option>
@@ -153,7 +153,7 @@ export default function DataQualityPage() {
             id="filter-st"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="rounded border border-slate-300 bg-white px-2 py-1"
+            className="rounded border border-slate-300 bg-surface px-2 py-1"
           >
             <option value="">All Statuses</option>
             <option value="open">Open</option>
@@ -223,7 +223,7 @@ export default function DataQualityPage() {
                           <button
                             type="button"
                             onClick={() => handleUpdateStatus(issue.id, "resolved")}
-                            className="rounded bg-emerald-600 px-2 py-1 text-white hover:bg-emerald-700"
+                            className="rounded bg-emerald-600 px-2 py-1 text-white hover:bg-emerald-700 dark:hover:bg-emerald-500"
                           >
                             Resolve
                           </button>

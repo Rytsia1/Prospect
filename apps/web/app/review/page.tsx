@@ -172,7 +172,7 @@ export default function ReviewPage() {
             id="filter-status"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="rounded border border-slate-300 bg-white px-2 py-1"
+            className="rounded border border-slate-300 bg-surface px-2 py-1"
           >
             <option value="">All Statuses</option>
             <option value="needs_review">Needs Review</option>
@@ -189,7 +189,7 @@ export default function ReviewPage() {
             id="filter-metric"
             value={metricFilter}
             onChange={(e) => setMetricFilter(e.target.value)}
-            className="rounded border border-slate-300 bg-white px-2 py-1"
+            className="rounded border border-slate-300 bg-surface px-2 py-1"
           >
             <option value="">All Metrics</option>
             <option value="revenue">Revenue</option>
@@ -290,7 +290,7 @@ export default function ReviewPage() {
                           <button
                             type="button"
                             onClick={() => handleAccept(fact.id)}
-                            className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+                            className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700 dark:hover:bg-emerald-500"
                             title="Accept fact as authoritative"
                           >
                             Accept
@@ -338,8 +338,8 @@ export default function ReviewPage() {
 
       {/* Correction Modal */}
       {correctingFact && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-surface p-6 shadow-xl">
             <h2 className="text-base font-semibold text-slate-900">
               Correct Financial Fact: {correctingFact.metric_name}
             </h2>
@@ -445,8 +445,8 @@ export default function ReviewPage() {
 
       {/* Reject Modal */}
       {rejectingFact && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-surface p-6 shadow-xl">
             <h2 className="text-base font-semibold text-slate-900">
               Reject Fact: {rejectingFact.metric_name}
             </h2>
@@ -479,7 +479,7 @@ export default function ReviewPage() {
                 <button
                   type="submit"
                   disabled={savingRej}
-                  className="rounded bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-50"
+                  className="rounded bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700 dark:hover:bg-rose-500 disabled:opacity-50"
                 >
                   {savingRej ? "Rejecting..." : "Confirm Reject"}
                 </button>
@@ -491,8 +491,8 @@ export default function ReviewPage() {
 
       {/* History Drawer Modal */}
       {historyFact && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-surface p-6 shadow-xl">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-slate-900">
                 Revision History: {historyFact.metric_name}

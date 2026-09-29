@@ -48,7 +48,7 @@ export default function WatchlistPage() {
         </div>
         <Link
           href="/companies"
-          className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          className="rounded border border-slate-300 bg-surface px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
         >
           Manage Companies →
         </Link>

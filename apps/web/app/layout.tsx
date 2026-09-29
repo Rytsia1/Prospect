@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Sans } from "next/font/google";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { Nav } from "@/components/nav";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { parseTheme, THEME_COOKIE } from "@/lib/theme";
 import "./globals.css";
 
 // Downloaded at build time and served from this origin: no request to Google at runtime.
@@ -20,16 +23,21 @@ export const metadata: Metadata = {
   description: "Evidence-first financial document intelligence",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Light unless this browser chose dark; rendered on the server, so the page never flashes.
+  const theme = parseTheme((await cookies()).get(THEME_COOKIE)?.value);
   return (
-    <html lang="en" className={plexSans.variable}>
-      <body className="flex min-h-screen flex-col bg-white text-slate-900 antialiased">
+    <html lang="en" className={`${plexSans.variable}${theme === "dark" ? " dark" : ""}`}>
+      <body className="flex min-h-screen flex-col bg-surface text-slate-900 antialiased">
         <header className="border-b border-slate-200">
           <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-2">
             <Link href="/" className="font-semibold tracking-tight">
               Prospect
             </Link>
-            <Nav />
+            <div className="flex items-center gap-1">
+              <Nav />
+              <ThemeToggle initial={theme} />
+            </div>
           </div>
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8">{children}</main>

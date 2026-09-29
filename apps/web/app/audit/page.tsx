@@ -68,7 +68,7 @@ export default function AuditPage() {
             id="filter-event-type"
             value={eventTypeFilter}
             onChange={(e) => setEventTypeFilter(e.target.value)}
-            className="rounded border border-slate-300 bg-white px-2 py-1"
+            className="rounded border border-slate-300 bg-surface px-2 py-1"
           >
             <option value="">All Events</option>
             <option value="FACT_ACCEPTED">FACT_ACCEPTED</option>
@@ -93,7 +93,7 @@ export default function AuditPage() {
             id="filter-entity-type"
             value={entityTypeFilter}
             onChange={(e) => setEntityTypeFilter(e.target.value)}
-            className="rounded border border-slate-300 bg-white px-2 py-1"
+            className="rounded border border-slate-300 bg-surface px-2 py-1"
           >
             <option value="">All Entities</option>
             <option value="financial_fact">financial_fact</option>
@@ -114,11 +114,11 @@ export default function AuditPage() {
           {events.map((evt) => (
             <div
               key={evt.id}
-              className="rounded-lg border border-slate-200 bg-white p-4 shadow-2xs hover:border-slate-300"
+              className="rounded-lg border border-slate-200 bg-surface p-4 shadow-2xs hover:border-slate-300"
             >
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
                 <div className="flex items-center gap-2">
-                  <span className="rounded bg-slate-900 px-2 py-0.5 font-mono text-[11px] font-semibold text-white">
+                  <span className="rounded bg-slate-900 px-2 py-0.5 font-mono text-[11px] font-semibold text-white dark:text-slate-950">
                     {evt.event_type}
                   </span>
                   <span className="text-xs text-slate-500">

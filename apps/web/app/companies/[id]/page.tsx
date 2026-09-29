@@ -185,7 +185,7 @@ export default function CompanyDetailPage() {
               className={`rounded border px-2.5 py-1 text-xs font-medium ${
                 isWatchlist
                   ? "border-amber-300 bg-amber-50 text-amber-800"
-                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  : "border-slate-300 bg-surface text-slate-700 hover:bg-slate-50"
               }`}
             >
               {isWatchlist ? "★ On Watchlist" : "☆ Add to Watchlist"}
@@ -238,7 +238,7 @@ export default function CompanyDetailPage() {
                   required
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                  className="mt-1 w-full rounded border border-slate-300 bg-surface px-2.5 py-1.5 text-sm"
                 />
               </div>
               <div>
@@ -250,7 +250,7 @@ export default function CompanyDetailPage() {
                   type="text"
                   value={editTicker}
                   onChange={(e) => setEditTicker(e.target.value)}
-                  className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                  className="mt-1 w-full rounded border border-slate-300 bg-surface px-2.5 py-1.5 text-sm"
                 />
               </div>
             </div>
@@ -263,7 +263,7 @@ export default function CompanyDetailPage() {
                 type="text"
                 value={editDesc}
                 onChange={(e) => setEditDesc(e.target.value)}
-                className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                className="mt-1 w-full rounded border border-slate-300 bg-surface px-2.5 py-1.5 text-sm"
               />
             </div>
             <div className="flex justify-end gap-2 pt-2">
@@ -323,13 +323,13 @@ export default function CompanyDetailPage() {
       <div className="flex flex-wrap gap-2 text-xs">
         <Link
           href={`/data-quality?company_id=${company.id}`}
-          className="rounded border border-slate-200 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+          className="rounded border border-slate-200 bg-surface px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
         >
           Check Company Data Quality →
         </Link>
         <Link
           href={`/scenarios?company_id=${company.id}`}
-          className="rounded border border-slate-200 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+          className="rounded border border-slate-200 bg-surface px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
         >
           Model Scenarios for {company.name} →
         </Link>
@@ -361,7 +361,7 @@ export default function CompanyDetailPage() {
                 <select
                   value={selectedDocId}
                   onChange={(e) => setSelectedDocId(e.target.value)}
-                  className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                  className="rounded border border-slate-300 bg-surface px-3 py-1.5 text-sm"
                   required
                 >
                   <option value="">Select a document...</option>

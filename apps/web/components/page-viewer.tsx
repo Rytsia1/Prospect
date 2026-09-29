@@ -26,7 +26,7 @@ function Highlighted({ text, highlight }: { text: string; highlight?: string | n
       {text.slice(0, at)}
       <mark
         ref={(el) => el?.scrollIntoView({ block: "center" })}
-        className="rounded bg-blue-100 px-0.5 ring-1 ring-fact"
+        className="rounded bg-blue-100 px-0.5 text-slate-900 ring-1 ring-fact"
       >
         {highlight}
       </mark>
@@ -139,7 +139,7 @@ export function PageViewer({
                   title={p.char_count === 0 ? "No extracted text" : undefined}
                   className={`w-full rounded border px-2 py-1 text-left ${
                     p.page_number === pageNumber
-                      ? "border-slate-900 bg-slate-900 text-white"
+                      ? "border-slate-900 bg-slate-900 text-white dark:text-slate-950"
                       : "border-slate-200 hover:bg-slate-50"
                   } ${p.char_count === 0 ? "text-slate-400" : ""}`}
                 >

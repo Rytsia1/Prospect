@@ -132,7 +132,7 @@ export default function CompaniesPage() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. Bank Central Asia"
-                  className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                  className="mt-1 w-full rounded border border-slate-300 bg-surface px-2.5 py-1.5 text-sm"
                 />
               </div>
               <div>
@@ -148,7 +148,7 @@ export default function CompaniesPage() {
                   value={ticker}
                   onChange={(e) => setTicker(e.target.value)}
                   placeholder="e.g. BBCA"
-                  className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                  className="mt-1 w-full rounded border border-slate-300 bg-surface px-2.5 py-1.5 text-sm"
                 />
               </div>
               <div>
@@ -164,7 +164,7 @@ export default function CompaniesPage() {
                   value={country}
                   onChange={(e) => setCountry(e.target.value)}
                   placeholder="e.g. ID"
-                  className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                  className="mt-1 w-full rounded border border-slate-300 bg-surface px-2.5 py-1.5 text-sm"
                 />
               </div>
               <div>
@@ -180,7 +180,7 @@ export default function CompaniesPage() {
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value)}
                   placeholder="e.g. IDR"
-                  className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                  className="mt-1 w-full rounded border border-slate-300 bg-surface px-2.5 py-1.5 text-sm"
                 />
               </div>
             </div>
@@ -194,7 +194,7 @@ export default function CompaniesPage() {
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Brief business summary"
-                className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                className="mt-1 w-full rounded border border-slate-300 bg-surface px-2.5 py-1.5 text-sm"
               />
             </div>
             <div className="flex justify-end gap-2 pt-2">

@@ -41,7 +41,7 @@ export function SourcePanel({ fact, onClose }: { fact: FinancialFact; onClose: (
     <aside
       ref={panel}
       aria-labelledby="source-panel-heading"
-      className="fixed inset-x-0 bottom-0 z-20 max-h-[70vh] space-y-3 overflow-y-auto rounded-t-lg border-t border-slate-200 bg-white p-4 shadow-2xl lg:sticky lg:top-4 lg:right-auto lg:bottom-auto lg:left-auto lg:z-auto lg:max-h-[calc(100vh-2rem)] lg:rounded lg:border lg:shadow-none"
+      className="fixed inset-x-0 bottom-0 z-20 max-h-[70vh] space-y-3 overflow-y-auto rounded-t-lg border-t border-slate-200 bg-surface p-4 shadow-2xl lg:sticky lg:top-4 lg:right-auto lg:bottom-auto lg:left-auto lg:z-auto lg:max-h-[calc(100vh-2rem)] lg:rounded lg:border lg:shadow-none"
     >
       <div className="flex items-baseline justify-between gap-3">
         <h2

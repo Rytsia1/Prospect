@@ -145,7 +145,7 @@ export default function ScenariosPage() {
       {/* Interactive Scenario Calculator */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Left: Inputs & Sliders */}
-        <div className="space-y-5 rounded-lg border border-slate-200 bg-white p-5 shadow-xs">
+        <div className="space-y-5 rounded-lg border border-slate-200 bg-surface p-5 shadow-xs">
           <h2 className="text-base font-semibold text-slate-900">Scenario Assumptions</h2>
 
           <div className="space-y-4">
@@ -250,7 +250,7 @@ export default function ScenariosPage() {
             <div className="py-12 text-center text-xs text-slate-500">Calculating outputs...</div>
           ) : preview ? (
             <div className="space-y-4">
-              <div className="rounded-lg border border-slate-200 bg-white p-4">
+              <div className="rounded-lg border border-slate-200 bg-surface p-4">
                 <div className="flex items-center justify-between text-xs text-slate-500">
                   <span>Reported Base Revenue</span>
                   <span className="font-mono">{formatAmount(preview.base_revenue, "IDR")}</span>
@@ -280,7 +280,7 @@ export default function ScenariosPage() {
               </div>
 
               {preview.scenario_net_income && (
-                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="rounded-lg border border-slate-200 bg-surface p-4">
                   <div className="flex items-center justify-between text-xs text-slate-500">
                     <span>Reported Base Net Income</span>
                     <span className="font-mono">
@@ -305,7 +305,7 @@ export default function ScenariosPage() {
                 </div>
               )}
 
-              <div className="rounded border border-slate-200 bg-white p-3 text-[11px] text-slate-500">
+              <div className="rounded border border-slate-200 bg-surface p-3 text-[11px] text-slate-500">
                 <strong>Calculation Method:</strong> Deterministic Decimal arithmetic.
                 <br />
                 <code>scenario_revenue = base_revenue × (1 + growth_pct)</code>
@@ -323,8 +323,8 @@ export default function ScenariosPage() {
 
       {/* Save Scenario Dialog */}
       {showSave && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-surface p-6 shadow-xl">
             <h2 className="text-base font-semibold text-slate-900">Save Scenario Model</h2>
             <form onSubmit={handleSave} className="mt-4 space-y-3">
               <div>

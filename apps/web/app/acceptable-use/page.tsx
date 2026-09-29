@@ -126,7 +126,7 @@ export default function AcceptableUsePage() {
                 <th className="px-4 py-3">Enforcement Layer</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 bg-white text-slate-700">
+            <tbody className="divide-y divide-slate-200 bg-surface text-slate-700">
               <tr>
                 <td className="px-4 py-3 font-medium text-slate-900">Max Upload Size</td>
                 <td className="px-4 py-3">50 MiB (52,428,800 bytes)</td>

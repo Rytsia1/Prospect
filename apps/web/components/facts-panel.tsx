@@ -184,7 +184,7 @@ export function EvidenceCard({ fact, onClose }: { fact: FinancialFact; onClose: 
           Close
         </button>
       </div>
-      <p className="mt-2 break-words rounded bg-white px-2 py-1 font-mono text-xs">
+      <p className="mt-2 break-words rounded bg-surface px-2 py-1 font-mono text-xs">
         {fact.evidence.content}
       </p>
       <dl className="mt-2 grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1 text-xs">

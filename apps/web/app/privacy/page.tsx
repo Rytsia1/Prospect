@@ -104,7 +104,7 @@ export default function PrivacyPolicyPage() {
                 <th className="px-4 py-3">Purpose</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 bg-white text-slate-700">
+            <tbody className="divide-y divide-slate-200 bg-surface text-slate-700">
               <tr>
                 <td className="px-4 py-3 font-medium text-slate-900">Uploaded Documents</td>
                 <td className="px-4 py-3">
@@ -196,7 +196,7 @@ export default function PrivacyPolicyPage() {
                 <th className="px-4 py-3">Automated Deletion Mechanism</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 bg-white text-slate-700">
+            <tbody className="divide-y divide-slate-200 bg-surface text-slate-700">
               <tr>
                 <td className="px-4 py-3 font-medium text-slate-900">Verified Uploaded PDF</td>
                 <td className="px-4 py-3">
@@ -310,6 +310,13 @@ export default function PrivacyPolicyPage() {
             anonymous workspace and prevent Cross-Site Request Forgery (CSRF).
           </li>
           <li>
+            <strong>
+              Theme Cookie (<code>theme</code>):
+            </strong>{" "}
+            Set only if you switch between light and dark mode. It holds just the word
+            &quot;light&quot; or &quot;dark&quot;, no identifier, and expires after one year.
+          </li>
+          <li>
             <strong>Local Storage:</strong> Prospect does not store document data or personal state
             in browser <code>localStorage</code> or <code>sessionStorage</code>. (The application
             only checks for and removes obsolete legacy tokens if found from earlier versions).
@@ -341,7 +348,7 @@ export default function PrivacyPolicyPage() {
                 <th className="px-4 py-3">Location / Residency</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 bg-white text-slate-700">
+            <tbody className="divide-y divide-slate-200 bg-surface text-slate-700">
               <tr>
                 <td className="px-4 py-3 font-medium text-slate-900">Vercel</td>
                 <td className="px-4 py-3">Frontend Next.js web hosting and API edge proxy</td>
