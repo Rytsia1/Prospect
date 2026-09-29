@@ -3,7 +3,7 @@ import { contentSecurityPolicy, originOnly } from "@/lib/csp";
 import { proxyHeaders } from "@/lib/proxy";
 
 // Where this app proxies /api/v1. Unset on Vercel with the `api` service: vercel.json routes
-// /api/* to it before this app sees the request (docs/ADR-006). next.config.ts requires it for
+// /api/v1/* to it before this app sees the request (docs/ADR-006). next.config.ts requires it for
 // other production builds; development defaults to a local API.
 const API_ORIGIN =
   process.env.API_ORIGIN ??

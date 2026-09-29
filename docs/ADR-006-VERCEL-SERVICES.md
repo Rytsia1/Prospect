@@ -19,11 +19,11 @@ One Vercel project, configured by `vercel.json` at the repository root:
 | Service | Root | Public path |
 |---|---|---|
 | `web` | `apps/web` (Next.js) | `/(.*)`, everything else |
-| `api` | `apps/api` (FastAPI, entrypoint `app/main.py`) | `/api/(.*)`; its routes are under `/api/v1` |
+| `api` | `apps/api` (FastAPI, entrypoint `app/main.py`) | `/api/v1` and `/api/v1/(.*)` only, path kept (its routes are under `/api/v1`) |
 
 - The browser still talks to one origin, so the session cookie stays first-party
   (`__Host-`, HttpOnly, SameSite=Strict) and the API needs no credentialed CORS.
-- Vercel's edge routes `/api/*` to the API before the web app sees it, so on Vercel the web
+- Vercel's edge routes `/api/v1/*` to the API before the web app sees it, so on Vercel the web
   app neither proxies nor needs `API_ORIGIN` or `TRUSTED_PROXY_SECRET`. Outside Vercel (or with
   the API elsewhere) `API_ORIGIN` keeps the ADR-005 proxy working unchanged.
 - No service calls another from server code, so there are no service bindings.
@@ -45,7 +45,8 @@ Consequences in code (all keyed on `VERCEL=1`, which the platform sets):
 - Function limits apply to the API: request and response bodies of at most 4.5 MB (PDFs go
   straight from the browser to storage, but very large exports could hit it) and a maximum
   duration per request.
-- `/health` is not public (only `/api/*` is routed to the API); use deployment status and logs.
+- Nothing outside `/api/v1` reaches the API: `/health`, `/docs` and any other API path are not
+  public (other `/api/...` paths go to the web app and 404); use deployment status and logs.
 - Project environment variables are visible to both services; the web app reads only
   `STORAGE_ORIGIN`.
 - Migrations run from the deploy step as the database owner, not from a start command.
