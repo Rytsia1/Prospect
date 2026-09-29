@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { IBM_Plex_Sans } from "next/font/google";
 import { cookies } from "next/headers";
 import Link from "next/link";
+import { LogoSymbol } from "@/components/logo";
 import { Nav } from "@/components/nav";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { parseTheme, THEME_COOKIE } from "@/lib/theme";
@@ -31,7 +32,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="flex min-h-screen flex-col bg-surface text-slate-900 antialiased">
         <header className="border-b border-slate-200">
           <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-2">
-            <Link href="/" className="font-semibold tracking-tight">
+            <Link
+              href="/"
+              className="inline-flex min-h-11 items-center gap-2 text-lg font-semibold tracking-tight"
+            >
+              <LogoSymbol className="h-6 w-6" />
               Prospect
             </Link>
             <div className="flex items-center gap-1">

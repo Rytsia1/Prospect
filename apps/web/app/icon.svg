@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <title>Prospect</title>
+  <!-- Small-size cut of the logo (brand/prospect-symbol-small.svg), light and dark browser themes -->
+  <style>.ink{fill:#0F172A}.fact{fill:#4338CA}@media (prefers-color-scheme:dark){.ink{fill:#FFFFFF}.fact{fill:#818CF8}}</style>
+  <path class="ink" d="M70 22 H60 A36 36 0 0 0 24 58 V198 A36 36 0 0 0 60 234 H70 A18 18 0 0 0 70 198 H60 V58 H70 A18 18 0 0 0 70 22 Z M186 22 H196 A36 36 0 0 1 232 58 V198 A36 36 0 0 1 196 234 H186 A18 18 0 0 1 186 198 H196 V58 H186 A18 18 0 0 1 186 22 Z"/>
+  <circle class="fact" cx="128" cy="128" r="34"/>
+</svg>
