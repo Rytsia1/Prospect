@@ -5,6 +5,14 @@
   --color-fact: #1e40af;
   --color-calc: #047857;
   --color-interp: #92400e;
+  /* Primary actions only; distinct from the evidence colours. White on it: 7.9:1. */
+  --color-accent: #4338ca;
+  --color-accent-hover: #3730a3;
+}
+
+/* IBM Plex Sans, self-hosted by next/font (layout.tsx), so the CSP's font-src 'self' holds. */
+@theme inline {
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
 body {

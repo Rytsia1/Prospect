@@ -276,7 +276,7 @@ export default function CompanyDetailPage() {
               </button>
               <button
                 type="submit"
-                className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+                className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover"
               >
                 Save Changes
               </button>
@@ -342,7 +342,7 @@ export default function CompanyDetailPage() {
           <button
             type="button"
             onClick={() => setShowAttach(true)}
-            className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+            className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover"
           >
             + Attach Document
           </button>
@@ -374,7 +374,7 @@ export default function CompanyDetailPage() {
                 <button
                   type="submit"
                   disabled={attaching || !selectedDocId}
-                  className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                  className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover disabled:opacity-50"
                 >
                   {attaching ? "Attaching..." : "Attach to Company"}
                 </button>

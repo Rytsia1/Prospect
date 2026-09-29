@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  changeArrow,
   formatBytes,
   formatRatio,
   isSettled,
@@ -76,6 +77,9 @@ test("ratios round only at display, half away from zero, without floats", () => 
     formatRatio("0.0000000000000001110223024625156540423631668090820", "percent", true),
     "0.00%",
   );
+  // A change's arrow follows the shown sign; one that rounds to zero gets none.
+  const arrow = (v: string) => changeArrow(formatRatio(v, "percent", true));
+  assert.deepEqual(["0.18", "-0.25", "0", "-0.00001"].map(arrow), ["▲", "▼", "", ""]);
   assert.equal(roundDecimal("0.125", 0, 2), "0.13");
   assert.equal(roundDecimal("-0.125", 0, 2), "−0.13");
   assert.equal(roundDecimal("-0.001", 0, 2), "0.00");

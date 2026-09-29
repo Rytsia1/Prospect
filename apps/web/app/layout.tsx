@@ -1,7 +1,15 @@
 import type { Metadata } from "next";
+import { IBM_Plex_Sans } from "next/font/google";
 import Link from "next/link";
 import { Nav } from "@/components/nav";
 import "./globals.css";
+
+// Downloaded at build time and served from this origin: no request to Google at runtime.
+const plexSans = IBM_Plex_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-plex-sans",
+});
 
 // Rendered per request so Next can put middleware.ts's CSP nonce on its scripts (a page
 // prerendered at build time would carry no nonce and be blocked by the policy).
@@ -14,7 +22,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={plexSans.variable}>
       <body className="flex min-h-screen flex-col bg-white text-slate-900 antialiased">
         <header className="border-b border-slate-200">
           <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-2">

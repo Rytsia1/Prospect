@@ -136,7 +136,7 @@ export default function DiffPage() {
               <button
                 type="submit"
                 disabled={comparing || !docAId || !docBId}
-                className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                className="rounded bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
               >
                 {comparing ? "Comparing..." : "Compare Documents"}
               </button>

@@ -101,7 +101,7 @@ export default function CompaniesPage() {
         <button
           type="button"
           onClick={() => setShowCreate(true)}
-          className="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
+          className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-hover"
         >
           + New Company
         </button>
@@ -208,7 +208,7 @@ export default function CompaniesPage() {
               <button
                 type="submit"
                 disabled={submitting || !name.trim()}
-                className="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
               >
                 {submitting ? "Creating..." : "Save Workspace"}
               </button>
@@ -299,7 +299,7 @@ export default function CompaniesPage() {
           <button
             type="button"
             onClick={() => setShowCreate(true)}
-            className="mt-4 rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
+            className="mt-4 rounded bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-hover"
           >
             Create your first company
           </button>

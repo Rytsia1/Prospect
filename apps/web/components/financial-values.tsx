@@ -4,7 +4,13 @@ import Link from "next/link";
 import { createContext, useContext } from "react";
 import { CalculationBadge } from "@/components/calculations-panel";
 import { FactBadge, pageText } from "@/components/facts-panel";
-import { type FinancialFact, formatAmount, formatExact, formatRatio } from "@/lib/documents";
+import {
+  changeArrow,
+  type FinancialFact,
+  formatAmount,
+  formatExact,
+  formatRatio,
+} from "@/lib/documents";
 import {
   type Cell,
   calculationPath,
@@ -40,11 +46,17 @@ export function EvidenceLink({ fact, label }: { fact: FinancialFact; label?: str
 
 /** A calculated value, or "Not possible". Never presented as a reported figure. */
 export function ResultValue({ result, signed = false }: { result: Result; signed?: boolean }) {
-  return result.status === "calculated" && result.value !== null ? (
-    <span title={`Exact ratio: ${result.value}`}>
-      {formatRatio(result.value, result.unit, signed)}
-    </span>
-  ) : (
+  if (result.status === "calculated" && result.value !== null) {
+    const text = formatRatio(result.value, result.unit, signed);
+    const arrow = signed && changeArrow(text);
+    return (
+      <span title={`Exact ratio: ${result.value}`}>
+        {arrow && <span aria-hidden="true">{arrow} </span>}
+        {text}
+      </span>
+    );
+  }
+  return (
     <span className="text-slate-600" title={result.reason ?? undefined}>
       Not possible
     </span>

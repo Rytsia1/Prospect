@@ -156,7 +156,7 @@ export default function WatchlistPage() {
           </p>
           <Link
             href="/companies"
-            className="mt-4 inline-block rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+            className="mt-4 inline-block rounded bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover"
           >
             Explore Companies
           </Link>

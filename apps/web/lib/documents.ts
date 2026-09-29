@@ -244,6 +244,12 @@ export function formatRatio(value: string, unit: Calculation["unit"], signed = f
   return signed && !text.startsWith("−") && !/^0\.00/.test(text) ? `+${text}` : text;
 }
 
+/** Direction of a signed formatRatio text, shown beside its sign (never colour alone). Neutral on
+ * purpose: whether up is good depends on the metric (debt up is not). */
+export function changeArrow(signedText: string): "▲" | "▼" | "" {
+  return signedText.startsWith("+") ? "▲" : signedText.startsWith("−") ? "▼" : "";
+}
+
 /** Hex SHA-256 of the file, sent with the upload so the server can verify the stored bytes. */
 export async function sha256Hex(data: ArrayBuffer): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));

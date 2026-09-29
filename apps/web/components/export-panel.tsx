@@ -134,7 +134,7 @@ export function ExportPanel({
           type="button"
           onClick={download}
           disabled={state === "working"}
-          className="rounded bg-slate-900 px-4 py-2 text-white hover:bg-slate-700 disabled:opacity-50"
+          className="rounded bg-accent px-4 py-2 text-white hover:bg-accent-hover disabled:opacity-50"
         >
           {state === "working" ? "Preparing…" : `Download ${format.toUpperCase()}`}
         </button>

@@ -433,7 +433,7 @@ export default function ReviewPage() {
                 <button
                   type="submit"
                   disabled={savingCorr || !corrValue.trim() || !corrReason.trim()}
-                  className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                  className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover disabled:opacity-50"
                 >
                   {savingCorr ? "Saving..." : "Save Correction"}
                 </button>

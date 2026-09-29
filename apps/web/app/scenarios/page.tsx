@@ -234,7 +234,7 @@ export default function ScenariosPage() {
               <button
                 type="button"
                 onClick={() => setShowSave(true)}
-                className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+                className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover"
               >
                 Save This Scenario
               </button>
@@ -378,7 +378,7 @@ export default function ScenariosPage() {
                 <button
                   type="submit"
                   disabled={saving || !scenarioName.trim()}
-                  className="rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                  className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover disabled:opacity-50"
                 >
                   {saving ? "Saving..." : "Save Scenario"}
                 </button>
