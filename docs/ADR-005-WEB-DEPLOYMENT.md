@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted; superseded for the API by ADR-006 (the API now runs as a Vercel service next to
+the web app). Worker, database and storage decisions stand.
 
 ## Context
 

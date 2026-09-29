@@ -14,8 +14,8 @@ https://prospect.<domain>
 
 | Component | Provider | Purpose |
 |---|---|---|
-| Frontend | Vercel | Next.js |
-| API | Railway / Render | FastAPI |
+| Frontend | Vercel (`web` service) | Next.js |
+| API | Vercel (`api` service, `/api/v1/*`) | FastAPI; docs/ADR-006 |
 | Worker | Railway / Render | PDF processing |
 | Database | Railway PostgreSQL / Supabase | PostgreSQL + pgvector |
 | File storage | Cloudflare R2 / Supabase Storage | Private PDFs |
@@ -55,9 +55,13 @@ Do not make the bucket public.
 
 ### Step 3 — API
 
-Deploy FastAPI to Railway or Render.
+The API is the `api` service of the Vercel project (`vercel.json` at the repository root,
+docs/ADR-006). Import the repository into Vercel once; both services deploy together.
 
-Configure:
+`DATABASE_URL` must point at an external connection pooler (e.g. the Supabase pooler or a
+Neon pooled URL): functions hold no pool of their own and use no prepared statements.
+
+Configure (on the Vercel project):
 
 ```text
 ENVIRONMENT=production
@@ -65,17 +69,20 @@ DATABASE_URL
 OBJECT_STORAGE_*
 LLM_API_KEY
 APP_SECRET            # ≥ 32 random bytes; the API refuses to start without it
-TRUSTED_PROXY_SECRET  # ≥ 32 random bytes; the same value on Vercel; required
 ALLOWED_ORIGINS       # https://prospect.example.com (the web app only; CORS + CSRF)
 DOCUMENT_SCANNER      # clamav (recommended) or none; startup fails if unset
 DOCUMENT_RETENTION_DAYS=30
 ```
 
-Start command (no forwarded-header trust: client IPs come only from the web proxy):
+There is no start command. Run migrations as the database owner in the deploy step, before the
+new deployment is promoted:
 
 ```bash
-alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log --no-proxy-headers
+cd apps/api && DATABASE_URL=<owner URL> uv run alembic upgrade head
 ```
+
+Client IPs for rate limits come from Vercel's edge (`X-Real-IP`, trusted only when Vercel sets
+`VERCEL=1`), so `TRUSTED_PROXY_SECRET` is not needed there.
 
 Once per bucket, with credentials allowed to configure it, apply the storage lifecycle rules
 (abandoned uploads expire after a day even if the worker never runs):
@@ -91,11 +98,8 @@ Limits, quotas and rate limits have safe defaults; see docs/SECURITY.md to tune 
 
 Deploy migrations.
 
-Verify:
-
-```text
-GET /health
-```
+Verify: `GET /api/v1/sessions/current` answers (401 without a session). `/health` is not
+public on Vercel; use the deployment status and function logs.
 
 ### Step 4 — Worker
 
@@ -121,15 +125,14 @@ Verify:
 
 ### Step 5 — Frontend
 
-Deploy Next.js to Vercel.
-
-Configure:
+The `web` service of the same Vercel project. Configure:
 
 ```text
-API_ORIGIN=https://api.example.com          # /api/v1 is proxied here (set before building)
 STORAGE_ORIGIN=https://<account-id>.r2.cloudflarestorage.com
-TRUSTED_PROXY_SECRET=<same value as the API> # the build fails on Vercel without it
 ```
+
+`API_ORIGIN` and `TRUSTED_PROXY_SECRET` are only for running the web app outside Vercel, where
+`middleware.ts` proxies `/api/v1` itself.
 
 ### Step 6 — Custom Domain
 
@@ -137,12 +140,9 @@ Configure:
 
 ```text
 prospect.example.com
-api.example.com
 ```
 
-Vercel handles the frontend domain.
-
-Railway/Render handles the API domain.
+Vercel serves both the web app and `/api/v1` on it.
 
 ### Step 7 — Production CORS
 
@@ -224,15 +224,16 @@ Vercel preview deployments can be used for frontend changes.
 - [ ] deployed
 - [ ] HTTPS active
 - [ ] environment variables configured
-- [ ] `API_ORIGIN` and `STORAGE_ORIGIN` set before the build
+- [ ] `STORAGE_ORIGIN` set before the build
 - [ ] production build succeeds
 - [ ] pages send Content-Security-Policy with a nonce and no console CSP violations
 
 ### API
 
 - [ ] deployed
-- [ ] `/health` works
-- [ ] migrations applied
+- [ ] `/api/v1/sessions/current` answers
+- [ ] migrations applied (as the owner, before promoting)
+- [ ] `DATABASE_URL` is a pooled URL
 - [ ] `ALLOWED_ORIGINS` = the web origin only (https)
 - [ ] `DOCUMENT_SCANNER` chosen explicitly (clamav, or none accepted knowingly)
 - [ ] /docs and /openapi.json answer 404
@@ -309,10 +310,11 @@ contacts.
 ## 9. Production Configuration Checklist
 
 Enforced at startup (the API or worker refuses to start): `ENVIRONMENT` defaults to production;
-`APP_SECRET` present (API) and strong; `TRUSTED_PROXY_SECRET` present (API) and strong;
+`APP_SECRET` present (API) and strong; `TRUSTED_PROXY_SECRET` present (API) and strong unless
+the API runs on Vercel;
 `ALLOWED_ORIGINS` exact https origins; secure session cookie; `DOCUMENT_SCANNER` chosen;
 `DOCUMENT_RETENTION_DAYS` set; https storage endpoint; rate limits well formed; lease longer than
-the processing timeout. Enforced on Vercel builds: `API_ORIGIN` and `TRUSTED_PROXY_SECRET`.
+the processing timeout. Enforced on non-Vercel web builds: `API_ORIGIN`.
 
 By hand: HTTPS on every domain; private bucket; bucket CORS and lifecycle rules; upload, processing
 and quota limits reviewed for expected traffic (defaults in docs/SECURITY.md); uvicorn started

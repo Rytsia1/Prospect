@@ -28,9 +28,9 @@ Docker is optional for local development and is NOT a production deployment depe
                                │ HTTPS
                                ▼
                     ┌─────────────────────┐
-                    │ Managed API Service │
+                    │ API service         │
                     │ FastAPI             │
-                    │ Railway / Render    │
+                    │ Vercel (/api/v1)    │
                     └──────┬───────┬──────┘
                            │       │
                            │       ▼
@@ -72,7 +72,7 @@ Responsibilities:
 
 ### Backend API
 
-**Railway or Render**
+**Vercel**, as the `api` service of the same project (docs/ADR-006)
 
 Responsibilities:
 
@@ -212,7 +212,8 @@ Docker Compose may be provided as an optional convenience, but no production fea
 
 ## 7. Environment Variables
 
-Frontend (server-side only; the browser calls the app's own `/api/v1`, proxied to the API):
+Frontend (server-side only; on Vercel `/api/v1` is routed to the API service, elsewhere proxied
+to `API_ORIGIN`):
 
 ```text
 API_ORIGIN
