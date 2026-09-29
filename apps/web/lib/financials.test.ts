@@ -5,11 +5,13 @@ import {
   type Cell,
   chartPoints,
   compareDecimal,
+  evidenceKey,
   exportPath,
   type Financials,
   findCalculation,
   indexFinancials,
   latestPeriod,
+  parseEvidenceKey,
   type Result,
 } from "./financials.ts";
 
@@ -95,4 +97,21 @@ test("export path carries format, scope and selections", () => {
     path,
     "/documents/d1/export?format=xlsx&scope=company&periods=FY2024&periods=FY2025&metrics=revenue",
   );
+});
+
+test("an evidence key round-trips and nothing else parses as one", () => {
+  const documentId = "0b7e8a2e-6f1d-4c1a-9a55-2f1c3d4e5f60";
+  const evidenceId = "9c1d2e3f-4a5b-4c6d-8e7f-001122334455";
+  const fact = { document_id: documentId, evidence: { id: evidenceId } } as FinancialFact;
+  assert.deepEqual(parseEvidenceKey(evidenceKey(fact)), { documentId, evidenceId });
+  for (const bad of [
+    null,
+    "",
+    documentId,
+    `${documentId}:x`,
+    `../x:${evidenceId}`,
+    `${documentId}:${evidenceId}:x`,
+  ]) {
+    assert.equal(parseEvidenceKey(bad), null, String(bad));
+  }
 });

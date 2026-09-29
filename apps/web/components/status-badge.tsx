@@ -1,4 +1,9 @@
-import { type DocumentStatus, STATUS_LABEL } from "@/lib/documents";
+import {
+  type DocumentStatus,
+  PROCESSING_STEPS,
+  processingStep,
+  STATUS_LABEL,
+} from "@/lib/documents";
 
 const TONE: Record<DocumentStatus, string> = {
   UPLOADING: "bg-slate-100 text-slate-700",
@@ -16,5 +21,40 @@ export function StatusBadge({ status }: { status: DocumentStatus }) {
     <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${TONE[status]}`}>
       {STATUS_LABEL[status]}
     </span>
+  );
+}
+
+/** Where a document is in the pipeline: real states only, no invented percentage. */
+export function ProcessingSteps({ status }: { status: DocumentStatus }) {
+  const current = processingStep(status);
+  if (current === null) return null;
+  return (
+    <ol aria-label="Processing progress" className="flex flex-wrap items-center gap-2 text-sm">
+      {PROCESSING_STEPS.map((label, i) => {
+        const done = i < current || status === "READY";
+        return (
+          <li
+            key={label}
+            aria-current={i === current && !done ? "step" : undefined}
+            className="flex items-center gap-2"
+          >
+            {i > 0 && <span aria-hidden="true" className="h-px w-6 bg-slate-300" />}
+            <span
+              className={
+                done
+                  ? "text-emerald-800"
+                  : i === current
+                    ? "font-medium text-slate-900"
+                    : "text-slate-400"
+              }
+            >
+              {done ? "✓ " : i === current ? "● " : ""}
+              {label}
+              {i === current && !done && <span className="sr-only"> (in progress)</span>}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }

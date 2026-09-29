@@ -25,6 +25,7 @@ export type ProspectDocument = {
   processing_error: string | null;
   created_at: string;
   updated_at: string;
+  delete_after?: string | null; // when retention deletes it; null: retention off
 };
 
 export const DOCUMENT_TYPE_LABEL: Record<DocumentType, string> = {
@@ -43,6 +44,18 @@ export const STATUS_LABEL: Record<DocumentStatus, string> = {
   READY: "Ready",
   FAILED: "Failed",
 };
+
+// The steps a document really goes through (the worker records no finer stage than PROCESSING).
+export const PROCESSING_STEPS = ["Upload", "Queue", "Processing", "Ready"] as const;
+
+/** Index of the step a document is on; READY is the last. FAILED has no step: the failure says
+ * what happened instead. */
+export function processingStep(status: DocumentStatus): number | null {
+  if (status === "FAILED") return null;
+  if (status === "UPLOADING") return 0;
+  if (status === "UPLOADED" || status === "QUEUED") return 1;
+  return status === "READY" ? 3 : 2;
+}
 
 export function isSettled(status: DocumentStatus): boolean {
   return status === "READY" || status === "FAILED";

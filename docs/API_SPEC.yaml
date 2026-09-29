@@ -1592,6 +1592,14 @@ components:
         updated_at:
           type: string
           format: date-time
+        delete_after:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+          description: >-
+            When retention deletes the document (DOCUMENT_RETENTION_DAYS after upload); null when
+            retention is off. The whole workspace is deleted sooner if its session ends.
 
     ResearchQuery:
       type: object

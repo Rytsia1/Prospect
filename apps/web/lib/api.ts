@@ -78,6 +78,14 @@ function ensureSession(): Promise<SessionInfo> {
   return pending;
 }
 
+/** Whether this browser already has a workspace, without starting one: a first visit (or a
+ * crawler) must not create an anonymous user just to be shown an empty list. The first upload
+ * starts the session. */
+export async function hasSession(): Promise<boolean> {
+  if (session || legacyToken) return true; // a legacy token is traded for a session on first use
+  return (await current()) !== null;
+}
+
 async function send(path: string, init: RequestInit): Promise<Response> {
   const { csrf_token } = await ensureSession();
   const unsafe = !SAFE_METHODS.has((init.method ?? "GET").toUpperCase());

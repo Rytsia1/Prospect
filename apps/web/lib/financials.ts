@@ -203,3 +203,18 @@ export function findCalculation(fin: Financials, key: string, period: string): R
 export function evidencePath(fact: FinancialFact): string {
   return `/documents/${fact.document_id}/evidence/${fact.evidence.id}`;
 }
+
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const EVIDENCE_KEY = new RegExp(`^(${UUID}):(${UUID})$`, "i");
+
+/** The open source panel, as a URL value: "<document id>:<evidence id>". The document is the
+ * fact's own, which in company scope can be another report of the same company. */
+export function evidenceKey(fact: FinancialFact): string {
+  return `${fact.document_id}:${fact.evidence.id}`;
+}
+
+/** The ids in an evidence key from the URL, or null for anything that is not exactly one. */
+export function parseEvidenceKey(key: string | null | undefined) {
+  const match = key ? EVIDENCE_KEY.exec(key) : null;
+  return match ? { documentId: match[1], evidenceId: match[2] } : null;
+}

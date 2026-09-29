@@ -2,14 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CalculationsPanel } from "@/components/calculations-panel";
 import { Dashboard } from "@/components/dashboard";
 import { ExportPanel } from "@/components/export-panel";
 import { EvidenceCard, FactsPanel } from "@/components/facts-panel";
+import { ShowEvidence } from "@/components/financial-values";
 import { PageViewer } from "@/components/page-viewer";
 import { ReconciliationView } from "@/components/reconciliation";
-import { StatusBadge } from "@/components/status-badge";
+import { SourcePanel } from "@/components/source-panel";
+import { ProcessingSteps, StatusBadge } from "@/components/status-badge";
 import { Timeline } from "@/components/timeline";
 import { ApiError, api } from "@/lib/api";
 import {
@@ -20,12 +22,26 @@ import {
   isSettled,
   type ProspectDocument,
 } from "@/lib/documents";
-import { type Financials, latestPeriod, type Scope, TABS, type Tab } from "@/lib/financials";
+import {
+  evidenceKey,
+  type Financials,
+  latestPeriod,
+  parseEvidenceKey,
+  type Scope,
+  TABS,
+  type Tab,
+} from "@/lib/financials";
 
 const POLL_MS = 5000;
 const USES_FINANCIALS: Tab[] = ["overview", "timeline", "reconciliation", "export"];
 
-export type WorkspaceState = { tab: Tab; scope: Scope; period: string | null; page: number };
+export type WorkspaceState = {
+  tab: Tab;
+  scope: Scope;
+  period: string | null;
+  page: number;
+  evidence: string | null; // the fact open in the source panel (lib/financials evidenceKey)
+};
 
 export function DocumentDetail({ id, initial }: { id: string; initial: WorkspaceState }) {
   const [document, setDocument] = useState<ProspectDocument | null>(null);
@@ -41,6 +57,7 @@ export function DocumentDetail({ id, initial }: { id: string; initial: Workspace
     const next = { ...state, ...patch };
     const params = new URLSearchParams({ tab: next.tab, scope: next.scope, page: `${next.page}` });
     if (next.period) params.set("period", next.period);
+    if (next.evidence) params.set("evidence", next.evidence);
     return `?${params}`;
   }
   function update(patch: Partial<WorkspaceState>) {
@@ -49,9 +66,15 @@ export function DocumentDetail({ id, initial }: { id: string; initial: Workspace
   }
   const goToPage = (page: number) => update({ page });
 
+  // The source opens beside the numbers; only the Evidence tab's own viewer follows the page.
   function showEvidence(fact: FinancialFact) {
     setEvidence(fact);
-    update({ tab: "evidence", page: fact.evidence.page_number });
+    const page = state.tab === "evidence" ? { page: fact.evidence.page_number } : {};
+    update({ evidence: evidenceKey(fact), ...page });
+  }
+  function closeEvidence() {
+    setEvidence(null);
+    update({ evidence: null });
   }
 
   const load = useCallback(async () => {
@@ -81,6 +104,19 @@ export function DocumentDetail({ id, initial }: { id: string; initial: Workspace
     if (ready) loadFinancials();
   }, [ready, loadFinancials]);
 
+  // A shared link with ?evidence= reopens that fact's source once the document is ready. A fact
+  // that is gone (or not this session's) simply leaves the panel closed.
+  const restoring = useRef(initial.evidence);
+  useEffect(() => {
+    const key = parseEvidenceKey(restoring.current);
+    if (!ready) return;
+    restoring.current = null;
+    if (!key) return;
+    api<{ fact: FinancialFact }>(`/documents/${key.documentId}/evidence/${key.evidenceId}`)
+      .then((view) => setEvidence(view.fact))
+      .catch(() => setState((s) => ({ ...s, evidence: null })));
+  }, [ready]);
+
   const active = document ? !isSettled(document.status) : false;
   useEffect(() => {
     if (!active) return;
@@ -106,7 +142,7 @@ export function DocumentDetail({ id, initial }: { id: string; initial: Workspace
   }
 
   const back = (
-    <Link href="/documents" className="text-sm text-slate-600 hover:text-slate-900">
+    <Link href="/" className="text-sm text-slate-600 hover:text-slate-900">
       ← Documents
     </Link>
   );
@@ -148,6 +184,10 @@ export function DocumentDetail({ id, initial }: { id: string; initial: Workspace
     ["Size", formatBytes(document.size_bytes)],
     ["Format", document.mime_type],
     ["Uploaded", formatDate(document.created_at)],
+    [
+      "Deleted automatically",
+      document.delete_after ? formatDate(document.delete_after) : "Not scheduled",
+    ],
     ["Last updated", formatDate(document.updated_at)],
     ["Document ID", document.id],
   ];
@@ -159,6 +199,24 @@ export function DocumentDetail({ id, initial }: { id: string; initial: Workspace
         <div className="min-w-0 space-y-2">
           <h1 className="break-words text-2xl font-semibold tracking-tight">{document.filename}</h1>
           <StatusBadge status={document.status} />
+          {ready && (
+            <nav aria-label="Research tools" className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+              {[
+                [`/data-quality?document_id=${document.id}`, "Data quality"],
+                ["/review", "Review figures"],
+                ["/scenarios", "Scenarios"],
+                ["/diff", "Compare reports"],
+              ].map(([href, label]) => (
+                <Link
+                  key={label}
+                  href={href}
+                  className="text-slate-600 underline hover:text-slate-900"
+                >
+                  {label}
+                </Link>
+              ))}
+            </nav>
+          )}
         </div>
         {fileAvailable && (
           <button
@@ -179,6 +237,11 @@ export function DocumentDetail({ id, initial }: { id: string; initial: Workspace
         >
           <p className="font-medium">Processing failed</p>
           <p className="mt-1">{document.processing_error ?? "No error details were recorded."}</p>
+          <p className="mt-2">
+            <Link href="/" className="underline">
+              Upload a different file
+            </Link>
+          </p>
         </div>
       )}
       {error && error.status !== 404 && (
@@ -206,7 +269,7 @@ export function DocumentDetail({ id, initial }: { id: string; initial: Workspace
           finError={finError}
           reload={loadFinancials}
           evidence={evidence}
-          setEvidence={setEvidence}
+          closeEvidence={closeEvidence}
           showEvidence={showEvidence}
           goToPage={goToPage}
           onCompanyChange={(d) => {
@@ -216,9 +279,12 @@ export function DocumentDetail({ id, initial }: { id: string; initial: Workspace
         />
       ) : (
         document.status !== "FAILED" && (
-          <p className="text-sm text-slate-500">
-            Extracted pages appear here once processing finishes.
-          </p>
+          <div className="space-y-2">
+            <ProcessingSteps status={document.status} />
+            <p className="text-sm text-slate-500">
+              Long reports can take a couple of minutes. This page updates by itself.
+            </p>
+          </div>
         )
       )}
     </div>
@@ -282,7 +348,7 @@ function Workspace(props: {
   finError: string | null;
   reload: () => void;
   evidence: FinancialFact | null;
-  setEvidence: (f: FinancialFact | null) => void;
+  closeEvidence: () => void;
   showEvidence: (f: FinancialFact) => void;
   goToPage: (page: number) => void;
   onCompanyChange: (d: ProspectDocument) => void;
@@ -291,6 +357,7 @@ function Workspace(props: {
   const { tab, scope, page } = state;
   const period = fin && state.period && fin.periods.includes(state.period) ? state.period : null;
   const shownPeriod = period ?? (fin ? latestPeriod(fin) : null);
+  const panelOpen = evidence !== null && tab !== "evidence"; // the Evidence tab shows it inline
 
   function financialsBody() {
     if (finError) {
@@ -363,48 +430,61 @@ function Workspace(props: {
         </ul>
       </nav>
 
-      {USES_FINANCIALS.includes(tab) && document.company_name && (
-        <fieldset className="flex flex-wrap items-center gap-4 text-sm">
-          <legend className="sr-only">Scope</legend>
-          {(["document", "company"] as const).map((s) => (
-            <label key={s} className="flex items-center gap-2">
-              <input
-                type="radio"
-                name="scope"
-                checked={scope === s}
-                onChange={() => update({ scope: s })}
-              />
-              {s === "document" ? "This document" : `All reports of ${document.company_name}`}
-            </label>
-          ))}
-        </fieldset>
-      )}
+      <ShowEvidence.Provider value={props.showEvidence}>
+        <div
+          className={
+            panelOpen ? "grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_28rem]" : undefined
+          }
+        >
+          <div className="min-w-0 space-y-6">
+            {USES_FINANCIALS.includes(tab) && document.company_name && (
+              <fieldset className="flex flex-wrap items-center gap-4 text-sm">
+                <legend className="sr-only">Scope</legend>
+                {(["document", "company"] as const).map((s) => (
+                  <label key={s} className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="scope"
+                      checked={scope === s}
+                      onChange={() => update({ scope: s })}
+                    />
+                    {s === "document" ? "This document" : `All reports of ${document.company_name}`}
+                  </label>
+                ))}
+              </fieldset>
+            )}
 
-      {USES_FINANCIALS.includes(tab) && financialsBody()}
-      {tab === "financials" && (
-        <div className="space-y-8">
-          <FactsPanel documentId={document.id} onShowEvidence={props.showEvidence} />
-          <CalculationsPanel documentId={document.id} onShowEvidence={props.showEvidence} />
+            {USES_FINANCIALS.includes(tab) && financialsBody()}
+            {tab === "financials" && (
+              <div className="space-y-8">
+                <FactsPanel documentId={document.id} onShowEvidence={props.showEvidence} />
+                <CalculationsPanel documentId={document.id} onShowEvidence={props.showEvidence} />
+              </div>
+            )}
+            {tab === "evidence" && (
+              <div className="space-y-3">
+                {evidence ? (
+                  <EvidenceCard fact={evidence} onClose={props.closeEvidence} />
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    Browse the extracted pages. Choose a fact under Financials, Overview or Timeline
+                    to see its source here or in the evidence explorer.
+                  </p>
+                )}
+                <PageViewer
+                  documentId={document.id}
+                  page={page}
+                  onPageChange={props.goToPage}
+                  highlight={
+                    evidence?.evidence.page_number === page ? evidence.evidence.content : null
+                  }
+                />
+              </div>
+            )}
+          </div>
+          {panelOpen && evidence && <SourcePanel fact={evidence} onClose={props.closeEvidence} />}
         </div>
-      )}
-      {tab === "evidence" && (
-        <div className="space-y-3">
-          {evidence ? (
-            <EvidenceCard fact={evidence} onClose={() => props.setEvidence(null)} />
-          ) : (
-            <p className="text-xs text-slate-500">
-              Browse the extracted pages. Choose a fact under Financials, Overview or Timeline to
-              see its source here or in the evidence explorer.
-            </p>
-          )}
-          <PageViewer
-            documentId={document.id}
-            page={page}
-            onPageChange={props.goToPage}
-            highlight={evidence?.evidence.page_number === page ? evidence.evidence.content : null}
-          />
-        </div>
-      )}
+      </ShowEvidence.Provider>
     </div>
   );
 }

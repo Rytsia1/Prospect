@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { createContext, useContext } from "react";
 import { CalculationBadge } from "@/components/calculations-panel";
 import { FactBadge, pageText } from "@/components/facts-panel";
 import { type FinancialFact, formatAmount, formatExact, formatRatio } from "@/lib/documents";
@@ -13,9 +16,23 @@ import {
 
 type Index = ReturnType<typeof indexFinancials>;
 
+/** Inside a document workspace: open a fact's source in the side panel (SourcePanel) instead of
+ * navigating away. Elsewhere (no provider) evidence links go to the evidence explorer page. */
+export const ShowEvidence = createContext<((fact: FinancialFact) => void) | null>(null);
+
 export function EvidenceLink({ fact, label }: { fact: FinancialFact; label?: string }) {
+  const show = useContext(ShowEvidence);
   return (
-    <Link href={evidencePath(fact)} className="text-fact underline underline-offset-2">
+    <Link
+      href={evidencePath(fact)}
+      onClick={(e) => {
+        // A plain click opens the panel; ctrl/cmd/shift/middle click still opens the page.
+        if (!show || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        show(fact);
+      }}
+      className="text-fact underline underline-offset-2"
+    >
       {label ?? pageText(fact)}
     </Link>
   );

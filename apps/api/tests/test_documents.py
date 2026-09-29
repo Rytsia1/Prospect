@@ -3,6 +3,7 @@
 import hashlib
 import os
 import uuid
+from datetime import datetime, timedelta
 
 import httpx
 import pytest
@@ -62,6 +63,17 @@ def queued_jobs(document_id: str) -> int:
     with SessionLocal() as s:
         query = select(func.count()).where(ProcessingJob.document_id == uuid.UUID(document_id))
         return s.scalar(query) or 0
+
+
+def test_each_document_says_when_retention_deletes_it(tune):
+    me = new_user()
+    document = create(me).json()["document"]
+    created = datetime.fromisoformat(document["created_at"])
+    assert datetime.fromisoformat(document["delete_after"]) == created + timedelta(days=30)
+    tune(document_retention_days=None)  # retention off: no date promised
+    assert (
+        client.get(f"/api/v1/documents/{document['id']}", headers=me).json()["delete_after"] is None
+    )
 
 
 def test_create_upload_complete_becomes_uploaded(storage):

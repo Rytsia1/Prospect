@@ -14,6 +14,7 @@ type Props = {
   page: number;
   onPageChange: (page: number) => void;
   highlight?: string | null; // verbatim evidence text to mark on the page
+  compact?: boolean; // the page alone, without the section and page lists (the source panel)
 };
 
 /** The page text with the first occurrence of `highlight` marked. */
@@ -34,7 +35,13 @@ function Highlighted({ text, highlight }: { text: string; highlight?: string | n
   );
 }
 
-export function PageViewer({ documentId, page: current, onPageChange, highlight }: Props) {
+export function PageViewer({
+  documentId,
+  page: current,
+  onPageChange,
+  highlight,
+  compact = false,
+}: Props) {
   const [pages, setPages] = useState<PageSummary[] | null>(null);
   const [sections, setSections] = useState<DocumentSection[]>([]);
   const [page, setPage] = useState<DocumentPage | null>(null);
@@ -88,8 +95,8 @@ export function PageViewer({ documentId, page: current, onPageChange, highlight 
   const label = page ? printedLabel(page) : null;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[16rem_1fr]">
-      <nav aria-label="Document navigation" className="space-y-5 text-sm">
+    <div className={compact ? "" : "grid gap-6 lg:grid-cols-[16rem_1fr]"}>
+      <nav aria-label="Document navigation" className={compact ? "hidden" : "space-y-5 text-sm"}>
         <div>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
             Sections

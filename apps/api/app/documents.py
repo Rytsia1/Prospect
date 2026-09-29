@@ -15,7 +15,14 @@ from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Path, Query, Request
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    computed_field,
+)
 from sqlalchemy import String, cast, delete, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -150,6 +157,14 @@ class DocumentOut(BaseModel):
     threat_scan: str | None = None  # clean | not_scanned; null until the worker scans it
     created_at: datetime
     updated_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def delete_after(self) -> datetime | None:
+        """When retention deletes it (the worker's sweep: DOCUMENT_RETENTION_DAYS after upload).
+        None when retention is off. The workspace can go sooner (docs/SECURITY.md §2)."""
+        days = get_settings().document_retention_days
+        return self.created_at + timedelta(days=days) if days else None
 
 
 class SignedUpload(BaseModel):

@@ -5,6 +5,7 @@ import {
   formatRatio,
   isSettled,
   MAX_UPLOAD_BYTES,
+  processingStep,
   roundDecimal,
   validatePdf,
 } from "./documents.ts";
@@ -79,4 +80,12 @@ test("ratios round only at display, half away from zero, without floats", () => 
   assert.equal(roundDecimal("-0.125", 0, 2), "−0.13");
   assert.equal(roundDecimal("-0.001", 0, 2), "0.00");
   assert.equal(roundDecimal("12345678901234567890.5", 0, 0), "12345678901234567891");
+});
+
+test("the progress steps follow the real statuses, and a failure has none", () => {
+  const steps = (
+    ["UPLOADING", "UPLOADED", "QUEUED", "PROCESSING", "EXTRACTING", "READY"] as const
+  ).map(processingStep);
+  assert.deepEqual(steps, [0, 1, 1, 2, 2, 3]);
+  assert.equal(processingStep("FAILED"), null);
 });

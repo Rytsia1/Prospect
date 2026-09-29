@@ -82,10 +82,17 @@ def test_a_hostile_result_file_cannot_hang_or_flood_the_worker(tmp_path):
     big = tmp_path / "big"
     big.write_bytes(b"x" * 10_000)
     assert len(sandbox._read_result(big, 100)) == 101  # read stops right past the cap
+    exact = tmp_path / "exact"
+    exact.write_bytes(bytes([97, 13, 10, 98, 26, 99, 0]))  # CRLF, 0x1A, NUL: binary, untouched
+    assert sandbox._read_result(exact, 100) == bytes([97, 13, 10, 98, 26, 99, 0])
     folder = tmp_path / "folder"
     folder.mkdir()
-    with pytest.raises(ProcessingCrashed):
+    with pytest.raises(ProcessingCrashed) as crashed:
         sandbox._read_result(folder, 100)  # not a regular file
+    assert str(crashed.value) == "Document processing failed."  # shown to users: no paths
+    with pytest.raises(ProcessingCrashed) as crashed:
+        sandbox._read_result(tmp_path / "missing", 100)
+    assert str(tmp_path) not in str(crashed.value)
     if sys.platform != "win32":
         link = tmp_path / "link"
         link.symlink_to("/dev/zero")  # would never end

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
 import { Upload } from "@/components/upload";
-import { ApiError, api } from "@/lib/api";
+import { ApiError, api, hasSession } from "@/lib/api";
 import {
   DOCUMENT_TYPE_LABEL,
   formatBytes,
@@ -21,6 +21,7 @@ export function DocumentsView() {
 
   const load = useCallback(async () => {
     try {
+      if (!(await hasSession())) return setDocuments([]); // nothing uploaded from this browser
       const { items } = await api<{ items: ProspectDocument[] }>("/documents");
       setDocuments(items);
       setError(null);
@@ -43,7 +44,10 @@ export function DocumentsView() {
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-semibold tracking-tight">Documents</h1>
+      <p className="text-sm text-slate-600">
+        Private to this browser, no account needed. Each document is deleted automatically (the date
+        is on its page), and clearing this browser&apos;s cookies ends access to your documents.
+      </p>
       <Upload onUploaded={load} />
 
       <section aria-labelledby="list-heading" className="space-y-3">

@@ -1,0 +1,13 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web-ui",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["node_modules/next/dist/bin/next", "dev", "-p", "3012"],
+      "cwd": "apps/web",
+      "env": { "API_ORIGIN": "http://127.0.0.1:8012", "STORAGE_ORIGIN": "http://127.0.0.1:5011" },
+      "port": 3012
+    }
+  ]
+}

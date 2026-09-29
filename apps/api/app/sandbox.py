@@ -157,18 +157,21 @@ def _read_result(path: os.PathLike[str] | str, max_bytes: int) -> bytes:
     flags |= getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     flags |= getattr(os, "O_NONBLOCK", 0)
+    flags |= getattr(os, "O_BINARY", 0)  # Windows: text mode stops at 0x1A and mangles CRLF
 
     try:
         fd = os.open(path, flags)
-    except OSError as exc:
-        raise ProcessingCrashed(f"cannot read parser result: {exc}") from exc
+    except OSError:  # missing (killed before it answered) or a symlink
+        log.warning("parser result unreadable", exc_info=True)
+        raise ProcessingCrashed() from None
 
     try:
         try:
             metadata = os.fstat(fd)
 
             if not stat.S_ISREG(metadata.st_mode):
-                raise ProcessingCrashed("parser result is not a regular file")
+                log.warning("parser result is not a regular file")
+                raise ProcessingCrashed()
 
             # Read one byte beyond the limit so callers can detect overflow.
             return os.read(fd, max_bytes + 1)
@@ -176,8 +179,9 @@ def _read_result(path: os.PathLike[str] | str, max_bytes: int) -> bytes:
         except ProcessingCrashed:
             raise
 
-        except OSError as exc:
-            raise ProcessingCrashed(f"cannot read parser result: {exc}") from exc
+        except OSError:
+            log.warning("parser result unreadable", exc_info=True)
+            raise ProcessingCrashed() from None
 
     finally:
         os.close(fd)
