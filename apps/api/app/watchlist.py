@@ -238,4 +238,3 @@ def remove_from_watchlist(
     )
     session.delete(entry)
     session.commit()
-

@@ -224,9 +224,7 @@ def _seed_financial_document(
 
     m_rev = session.scalar(select(FinancialMetric).where(FinancialMetric.key == "revenue"))
     m_ni = session.scalar(select(FinancialMetric).where(FinancialMetric.key == "net_income"))
-    m_assets = session.scalar(
-        select(FinancialMetric).where(FinancialMetric.key == "total_assets")
-    )
+    m_assets = session.scalar(select(FinancialMetric).where(FinancialMetric.key == "total_assets"))
     m_liab = session.scalar(
         select(FinancialMetric).where(FinancialMetric.key == "total_liabilities")
     )

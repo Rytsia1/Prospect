@@ -593,9 +593,7 @@ def test_data_quality_detects_impossible_relationships_and_suspicious_values(
 ):
     doc, facts = seed_document(db_session, user_a, "Anomaly_Doc.pdf", 2024)
     # Add an impossible relationship: current assets = 50T, total assets = 40T (Current > Total)
-    m_ca = db_session.scalar(
-        select(FinancialMetric).where(FinancialMetric.key == "current_assets")
-    )
+    m_ca = db_session.scalar(select(FinancialMetric).where(FinancialMetric.key == "current_assets"))
     p = db_session.scalar(select(DocumentPage).where(DocumentPage.document_id == doc.id))
     s = db_session.scalar(select(DocumentSection).where(DocumentSection.document_id == doc.id))
     ev = Evidence(
@@ -637,7 +635,6 @@ def test_data_quality_detects_impossible_relationships_and_suspicious_values(
     assert len(impossible) >= 1
     assert "current assets" in impossible[0]["description"].lower()
     assert "requires review" in impossible[0]["description"].lower()
-
 
 
 # ==========================================================================================
